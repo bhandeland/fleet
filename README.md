@@ -21,7 +21,11 @@ fleet new auth-feature -p "Add OAuth2 login"
 
 ![fleet new](assets/fleet-new.png)
 
-Without cmux.dev, this cd's into the worktree and launches Claude inline. With cmux.dev, it opens a dedicated workspace with sidebar status:
+Without cmux.dev, this cd's into the worktree and launches Claude inline. With cmux.dev, each branch gets its own workspace tab — launch several in parallel and switch between them:
+
+![fleet cmux tabs](assets/fleet-cmux-tabs.png)
+
+Each workspace has sidebar status showing the branch name and current state:
 
 ![fleet workspace](assets/fleet-workspace.png)
 
