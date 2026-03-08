@@ -424,6 +424,9 @@ _fleet_new() {
     if [[ -n "$workspace_id" ]]; then
       cmux rename-workspace --workspace "$workspace_id" "$branch" &>/dev/null
       cmux set-status task "$branch" --icon git-branch --workspace "$workspace_id" &>/dev/null
+      cmux set-status project "$(basename "$repo_root")" --icon folder --workspace "$workspace_id" &>/dev/null
+      cmux set-status worktree "$worktree_dir" --workspace "$workspace_id" &>/dev/null
+      cmux set-status created "$(date '+%Y-%m-%d %H:%M')" --icon clock --workspace "$workspace_id" &>/dev/null
       cmux set-status status "setting up" --color "#ffcc00" --workspace "$workspace_id" &>/dev/null
 
       # Save state
