@@ -457,12 +457,15 @@ _fleet_new() {
         _fleet_team "$branch"
       fi
 
-      # Send claude command to workspace
+      # Send claude command to workspace, then rename the session
       local claude_cmd="claude"
       if [[ -n "$prompt" ]]; then
         claude_cmd="claude -p $(printf '%q' "$prompt")"
       fi
       cmux send --workspace "$workspace_id" "$claude_cmd" 2>/dev/null
+      cmux send-key --workspace "$workspace_id" Enter 2>/dev/null
+      sleep 1
+      cmux send --workspace "$workspace_id" "/rename $branch" 2>/dev/null
       cmux send-key --workspace "$workspace_id" Enter 2>/dev/null
     fi
 
@@ -1411,8 +1414,10 @@ _fleet_worktree_names() {
 }
 
 _fleet_init_shell() {
-  # Output the shell wrapper function and completions for eval
-  cat <<'SHELL_WRAPPER'
+  # Output the shell wrapper function and completions for eval.
+  # Shell detection is embedded in the output so it runs in the
+  # user's shell (zsh/bash), not in this bash script.
+  cat <<'INIT_SHELL_OUTPUT'
 fleet() {
   if [[ "$1" == "cd" ]]; then
     local dir
@@ -1421,16 +1426,10 @@ fleet() {
     command fleet "$@"
   fi
 }
-SHELL_WRAPPER
-
-  # Auto-detect shell and output appropriate completions
-  if [[ -n "$ZSH_VERSION" ]]; then
-    cat <<'ZSH_COMPLETIONS'
 _fleet_worktree_names() {
   local repo_root
   repo_root="$(command fleet cd 2>/dev/null)" || return
-  local layout
-  layout=""
+  local layout=""
   if [[ -n "$repo_root" && -f "$repo_root/.fleet/config.json" ]]; then
     layout="$(grep '"layout"' "$repo_root/.fleet/config.json" 2>/dev/null | sed 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
   fi
@@ -1449,141 +1448,119 @@ _fleet_worktree_names() {
         /^worktree / { wt=substr($0,10); in_wt=(index(wt,prefix)==1) }
         /^branch / && in_wt { sub(/^branch refs\/heads\//,""); print }'
 }
-_fleet_zsh_complete() {
-  local -a subcmds=(
-    'new:New worktree + workspace, launch Claude'
-    'start:Resume Claude in existing workspace'
-    'cd:cd into worktree'
-    'ls:List worktrees'
-    'merge:Merge worktree branch into primary checkout'
-    'rm:Remove worktree + workspace + branch'
-    'init:Generate .fleet/setup hook'
-    'config:View or set configuration'
-    'focus:Switch to workspace'
-    'team:Spawn agent team in split panes'
-    'status:Show sidebar state'
-    'update:Update fleet to latest version'
-    'version:Show current version'
-  )
-  if (( CURRENT == 2 )); then
-    _describe 'fleet command' subcmds
-  elif (( CURRENT == 3 )); then
-    case "${words[2]}" in
-      start|cd|merge|focus|team|status)
-        local -a names=( ${(f)"$(_fleet_worktree_names)"} )
-        compadd -a names
-        ;;
-      rm)
-        local -a names=( ${(f)"$(_fleet_worktree_names)"} )
-        compadd -a names
-        compadd -- --all
-        ;;
-      init)
-        compadd -- --replace
-        ;;
-      config)
-        compadd -- set
-        ;;
-      ls)
-        compadd -- --status
-        ;;
-    esac
-  elif (( CURRENT == 4 )); then
-    case "${words[2]}" in
-      config)
-        if [[ "${words[3]}" == "set" ]]; then
-          compadd -- layout
-        fi
-        ;;
-    esac
-  elif (( CURRENT == 5 )); then
-    case "${words[2]}" in
-      config)
-        if [[ "${words[3]}" == "set" && "${words[4]}" == "layout" ]]; then
-          compadd -- nested outer-nested sibling
-        fi
-        ;;
-    esac
-  elif (( CURRENT == 6 )); then
-    case "${words[2]}" in
-      config)
-        if [[ "${words[3]}" == "set" && "${words[4]}" == "layout" ]]; then
-          compadd -- --global
-        fi
-        ;;
-    esac
-  fi
-}
-compdef _fleet_zsh_complete fleet
-ZSH_COMPLETIONS
-  elif [[ -n "$BASH_VERSION" ]]; then
-    cat <<'BASH_COMPLETIONS'
-_fleet_worktree_names() {
-  local repo_root
-  repo_root="$(command fleet cd 2>/dev/null)" || return
-  local layout
-  layout=""
-  if [[ -n "$repo_root" && -f "$repo_root/.fleet/config.json" ]]; then
-    layout="$(grep '"layout"' "$repo_root/.fleet/config.json" 2>/dev/null | sed 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
-  fi
-  if [[ -z "$layout" && -f "$HOME/.fleet/config.json" ]]; then
-    layout="$(grep '"layout"' "$HOME/.fleet/config.json" 2>/dev/null | sed 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
-  fi
-  layout="${layout:-nested}"
-  local prefix
-  case "$layout" in
-    outer-nested) prefix="$(dirname "$repo_root")/$(basename "$repo_root").worktrees/" ;;
-    sibling)      prefix="$(dirname "$repo_root")/$(basename "$repo_root")-" ;;
-    *)            prefix="$repo_root/.worktrees/" ;;
-  esac
-  git -C "$repo_root" worktree list --porcelain 2>/dev/null \
-    | awk -v prefix="$prefix" '
-        /^worktree / { wt=substr($0,10); in_wt=(index(wt,prefix)==1) }
-        /^branch / && in_wt { sub(/^branch refs\/heads\//,""); print }'
-}
-_fleet_bash_complete() {
-  local cur prev
-  cur="${COMP_WORDS[COMP_CWORD]}"
-  prev="${COMP_WORDS[COMP_CWORD-1]}"
-  if (( COMP_CWORD == 1 )); then
-    COMPREPLY=( $(compgen -W "new start cd ls merge rm init config focus team status update version" -- "$cur") )
-  elif (( COMP_CWORD == 2 )); then
-    case "$prev" in
-      start|cd|merge|focus|team|status)
-        COMPREPLY=( $(compgen -W "$(_fleet_worktree_names)" -- "$cur") )
-        ;;
-      rm)
-        COMPREPLY=( $(compgen -W "$(_fleet_worktree_names) --all" -- "$cur") )
-        ;;
-      init)
-        COMPREPLY=( $(compgen -W "--replace" -- "$cur") )
-        ;;
-      config)
-        COMPREPLY=( $(compgen -W "set" -- "$cur") )
-        ;;
-      ls)
-        COMPREPLY=( $(compgen -W "--status" -- "$cur") )
-        ;;
-    esac
-  elif (( COMP_CWORD == 3 )); then
-    if [[ "${COMP_WORDS[1]}" == "config" && "${COMP_WORDS[2]}" == "set" ]]; then
-      COMPREPLY=( $(compgen -W "layout" -- "$cur") )
+if [[ -n "$ZSH_VERSION" ]]; then
+  _fleet_zsh_complete() {
+    local -a subcmds=(
+      'new:New worktree + workspace, launch Claude'
+      'start:Resume Claude in existing workspace'
+      'cd:cd into worktree'
+      'ls:List worktrees'
+      'merge:Merge worktree branch into primary checkout'
+      'rm:Remove worktree + workspace + branch'
+      'init:Generate .fleet/setup hook'
+      'config:View or set configuration'
+      'focus:Switch to workspace'
+      'team:Spawn agent team in split panes'
+      'status:Show sidebar state'
+      'update:Update fleet to latest version'
+      'version:Show current version'
+    )
+    if (( CURRENT == 2 )); then
+      _describe 'fleet command' subcmds
+    elif (( CURRENT == 3 )); then
+      case "${words[2]}" in
+        start|cd|merge|focus|team|status)
+          local -a names=( ${(f)"$(_fleet_worktree_names)"} )
+          compadd -a names
+          ;;
+        rm)
+          local -a names=( ${(f)"$(_fleet_worktree_names)"} )
+          compadd -a names
+          compadd -- --all
+          ;;
+        init)
+          compadd -- --replace
+          ;;
+        config)
+          compadd -- set
+          ;;
+        ls)
+          compadd -- --status
+          ;;
+      esac
+    elif (( CURRENT == 4 )); then
+      case "${words[2]}" in
+        config)
+          if [[ "${words[3]}" == "set" ]]; then
+            compadd -- layout
+          fi
+          ;;
+      esac
+    elif (( CURRENT == 5 )); then
+      case "${words[2]}" in
+        config)
+          if [[ "${words[3]}" == "set" && "${words[4]}" == "layout" ]]; then
+            compadd -- nested outer-nested sibling
+          fi
+          ;;
+      esac
+    elif (( CURRENT == 6 )); then
+      case "${words[2]}" in
+        config)
+          if [[ "${words[3]}" == "set" && "${words[4]}" == "layout" ]]; then
+            compadd -- --global
+          fi
+          ;;
+      esac
     fi
-  elif (( COMP_CWORD == 4 )); then
-    if [[ "${COMP_WORDS[1]}" == "config" && "${COMP_WORDS[2]}" == "set" \
-       && "${COMP_WORDS[3]}" == "layout" ]]; then
-      COMPREPLY=( $(compgen -W "nested outer-nested sibling" -- "$cur") )
-    fi
-  elif (( COMP_CWORD == 5 )); then
-    if [[ "${COMP_WORDS[1]}" == "config" && "${COMP_WORDS[2]}" == "set" \
-       && "${COMP_WORDS[3]}" == "layout" ]]; then
-      COMPREPLY=( $(compgen -W "--global" -- "$cur") )
-    fi
+  }
+  if (( $+functions[compdef] )); then
+    compdef _fleet_zsh_complete fleet
   fi
-}
-complete -F _fleet_bash_complete fleet
-BASH_COMPLETIONS
-  fi
+elif [[ -n "$BASH_VERSION" ]]; then
+  _fleet_bash_complete() {
+    local cur prev
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    if (( COMP_CWORD == 1 )); then
+      COMPREPLY=( $(compgen -W "new start cd ls merge rm init config focus team status update version" -- "$cur") )
+    elif (( COMP_CWORD == 2 )); then
+      case "$prev" in
+        start|cd|merge|focus|team|status)
+          COMPREPLY=( $(compgen -W "$(_fleet_worktree_names)" -- "$cur") )
+          ;;
+        rm)
+          COMPREPLY=( $(compgen -W "$(_fleet_worktree_names) --all" -- "$cur") )
+          ;;
+        init)
+          COMPREPLY=( $(compgen -W "--replace" -- "$cur") )
+          ;;
+        config)
+          COMPREPLY=( $(compgen -W "set" -- "$cur") )
+          ;;
+        ls)
+          COMPREPLY=( $(compgen -W "--status" -- "$cur") )
+          ;;
+      esac
+    elif (( COMP_CWORD == 3 )); then
+      if [[ "${COMP_WORDS[1]}" == "config" && "${COMP_WORDS[2]}" == "set" ]]; then
+        COMPREPLY=( $(compgen -W "layout" -- "$cur") )
+      fi
+    elif (( COMP_CWORD == 4 )); then
+      if [[ "${COMP_WORDS[1]}" == "config" && "${COMP_WORDS[2]}" == "set" \
+         && "${COMP_WORDS[3]}" == "layout" ]]; then
+        COMPREPLY=( $(compgen -W "nested outer-nested sibling" -- "$cur") )
+      fi
+    elif (( COMP_CWORD == 5 )); then
+      if [[ "${COMP_WORDS[1]}" == "config" && "${COMP_WORDS[2]}" == "set" \
+         && "${COMP_WORDS[3]}" == "layout" ]]; then
+        COMPREPLY=( $(compgen -W "--global" -- "$cur") )
+      fi
+    fi
+  }
+  complete -F _fleet_bash_complete fleet
+fi
+INIT_SHELL_OUTPUT
 }
 
 # ── Main entrypoint ──────────────────────────────────────────────────
