@@ -31,10 +31,11 @@ teardown() {
   [[ "$output" == *"Worktree not found"* ]]
 }
 
-@test "fleet start with existing worktree changes directory" {
+@test "fleet start with existing worktree launches claude" {
   create_test_worktree "start-test"
-  fleet start start-test
-  [[ "$(pwd -P)" == *"start-test"* ]]
+  run fleet start start-test
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"claude called"* ]]
 }
 
 @test "fleet start suggests fleet new for missing worktree" {

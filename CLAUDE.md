@@ -8,16 +8,17 @@ fleet is a pure Bash shell tool that manages git worktree lifecycles for paralle
 
 ## Architecture
 
-**Single-file shell tool** — all logic lives in `fleet.sh` (~1200 lines), which is sourced into the user's shell (bash/zsh). There is no build step, no dependencies, and no test suite.
+**Single-file shell executable** — all logic lives in `fleet.sh` (~1400 lines), installed as `~/.local/bin/fleet`. A thin shell wrapper (output by `fleet init-shell`, loaded via `eval "$(fleet init-shell)"` in `.zshrc`/`.bashrc`) intercepts `fleet cd` to change the parent shell's directory; all other commands run as a subprocess.
 
 **Function structure:**
 - `fleet()` — public dispatcher, routes subcommands to `_fleet_<cmd>` functions
-- `_fleet_*()` — private functions: `_fleet_new`, `_fleet_start`, `_fleet_cd`, `_fleet_ls`, `_fleet_merge`, `_fleet_rm`, `_fleet_rm_all`, `_fleet_init`, `_fleet_config`, `_fleet_focus`, `_fleet_team`, `_fleet_status`, `_fleet_update`
+- `_fleet_*()` — private functions: `_fleet_new`, `_fleet_start`, `_fleet_cd`, `_fleet_ls`, `_fleet_merge`, `_fleet_rm`, `_fleet_rm_all`, `_fleet_init`, `_fleet_init_shell`, `_fleet_config`, `_fleet_focus`, `_fleet_team`, `_fleet_status`, `_fleet_update`
 - Helpers: `_fleet_repo_root`, `_fleet_safe_name`, `_fleet_default_branch`, `_fleet_has_cmux`, `_fleet_worktree_dir`, `_fleet_spinner_start/stop`, `_fleet_find_hook`
 - State management: `_fleet_save_state`, `_fleet_read_state_field`, `_fleet_rm_state`, `_fleet_save_team_surfaces`
 
 **Key design patterns:**
-- cmux.dev detection via `_fleet_has_cmux()` — graceful fallback to cd + inline claude when unavailable
+- Executable + shell wrapper: `fleet cd` prints the target path; the shell wrapper (from `init-shell`) does the actual `cd`. All other commands run as subprocesses.
+- cmux.dev detection via `_fleet_has_cmux()` — graceful fallback to subshell cd + inline claude when unavailable
 - Idempotent operations (e.g. `fleet new` reuses existing worktrees/workspaces)
 - Context-aware: `fleet rm`, `fleet merge`, `fleet status` with no args detect the current worktree from `$PWD`
 - Branch name sanitization: `feature/foo` → `feature-foo` for directory names
@@ -29,8 +30,8 @@ fleet is a pure Bash shell tool that manages git worktree lifecycles for paralle
 
 ## Key files
 
-- `fleet.sh` — the entire application
-- `install.sh` — curl-pipe installer that downloads fleet.sh to `~/.fleet/` and adds source line to shell RC
+- `fleet.sh` — the entire application, installed as `~/.local/bin/fleet`
+- `install.sh` — curl-pipe installer that downloads fleet.sh to `~/.local/bin/fleet` and adds eval line to shell RC
 - `.fleet/setup` — project-specific worktree setup hook (committed to repo)
 - `examples/setup-node` — example setup hook for Node.js projects
 
@@ -40,15 +41,18 @@ fleet is a pure Bash shell tool that manages git worktree lifecycles for paralle
 - Functions prefixed `_fleet_` for internal, `fleet` for public
 - Zsh compatibility: uses `setopt localoptions nomonitor` where needed for job control
 - Error handling: validate inputs, check `command -v`, guard with `|| return 1`
-- No `set -e` in fleet.sh (it's sourced, not executed); install.sh uses `set -e`
+- No `set -e` in fleet.sh (functions use `return 1` for error handling); install.sh uses `set -e`
 - cmux.dev calls always use `2>/dev/null` to suppress errors when workspace is stale
 
 ## QA — mandatory before considering any task done
 
-Always self-test changes to fleet.sh before finishing work. Source the file in a bash subshell and run the affected commands to verify correct output and behavior:
+Always self-test changes to fleet.sh before finishing work. Run the executable directly or source it in a bash subshell:
 
 ```bash
-bash -c 'source /path/to/fleet.sh && fleet <subcommand> [args]'
+# As executable
+bash /path/to/fleet.sh <subcommand> [args]
+# Or source for testing internal functions
+bash -c 'source /path/to/fleet.sh && _fleet_<function> [args]'
 ```
 
 Test thoroughly: check happy paths, error paths, flag combinations, and edge cases (no args, bad input, missing worktrees, etc.). Do not consider a task complete until you have verified the changes work.

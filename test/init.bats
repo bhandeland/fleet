@@ -57,3 +57,18 @@ teardown() {
   # It shouldn't fail with "already exists"
   [[ "$output" != *"already exists"* ]]
 }
+
+@test "fleet init adds .worktrees/ to .gitignore" {
+  # fleet init will add .worktrees/ before trying to run claude
+  run fleet init
+  # Check .gitignore was created with .worktrees/
+  grep -qxF '.worktrees/' "$REPO_DIR/.gitignore"
+}
+
+@test "fleet init does not duplicate .worktrees/ in .gitignore" {
+  printf '.worktrees/\n' > "$REPO_DIR/.gitignore"
+  run fleet init
+  local count
+  count="$(grep -cxF '.worktrees/' "$REPO_DIR/.gitignore")"
+  [ "$count" -eq 1 ]
+}

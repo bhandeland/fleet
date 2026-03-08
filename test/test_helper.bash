@@ -27,7 +27,7 @@ teardown_repo() {
   fi
 }
 
-# Source fleet.sh in a clean state
+# Source fleet.sh for unit testing (main guard prevents execution)
 load_fleet() {
   # Prevent update check from running
   export HOME="$TEST_DIR/home"

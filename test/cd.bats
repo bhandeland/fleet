@@ -18,17 +18,19 @@ teardown() {
   [[ "$output" == *"Usage: fleet cd"* ]]
 }
 
-@test "fleet cd with no args goes to repo root" {
+@test "fleet cd with no args prints repo root" {
   create_test_worktree "some-branch"
   cd "$REPO_DIR/.worktrees/some-branch"
-  fleet cd
-  [[ "$(pwd -P)" == "$(cd "$REPO_DIR" && pwd -P)" ]]
+  run fleet cd
+  [ "$status" -eq 0 ]
+  [[ "$output" == "$(cd "$REPO_DIR" && pwd -P)" ]]
 }
 
-@test "fleet cd with branch goes to worktree" {
+@test "fleet cd with branch prints worktree path" {
   create_test_worktree "cd-target"
-  fleet cd cd-target
-  [[ "$(pwd -P)" == *"cd-target"* ]]
+  run fleet cd cd-target
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"cd-target"* ]]
 }
 
 @test "fleet cd with missing worktree fails" {

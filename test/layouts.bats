@@ -21,11 +21,12 @@ teardown() {
   [ -d "$(dirname "$REPO_DIR")/repo.worktrees/outer-test" ]
 }
 
-@test "fleet cd with outer-nested layout" {
+@test "fleet cd with outer-nested layout prints correct path" {
   fleet config set layout outer-nested
   fleet new cd-outer
-  fleet cd cd-outer
-  [ "$PWD" = "$(dirname "$REPO_DIR")/repo.worktrees/cd-outer" ]
+  run fleet cd cd-outer
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(dirname "$REPO_DIR")/repo.worktrees/cd-outer" ]
 }
 
 @test "fleet ls with outer-nested layout" {
@@ -51,11 +52,12 @@ teardown() {
   [ -d "$(dirname "$REPO_DIR")/repo-sib-test" ]
 }
 
-@test "fleet cd with sibling layout" {
+@test "fleet cd with sibling layout prints correct path" {
   fleet config set layout sibling
   fleet new cd-sib
-  fleet cd cd-sib
-  [ "$PWD" = "$(dirname "$REPO_DIR")/repo-cd-sib" ]
+  run fleet cd cd-sib
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(dirname "$REPO_DIR")/repo-cd-sib" ]
 }
 
 @test "fleet ls with sibling layout" {

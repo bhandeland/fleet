@@ -14,6 +14,8 @@ Manages git worktree lifecycles for parallel Claude Code sessions. Each agent ge
 curl -fsSL https://gitlab.com/nighthawk-oss/fleet/-/raw/main/install.sh | sh
 ```
 
+This installs fleet to `~/.local/bin/fleet` and adds `eval "$(fleet init-shell)"` to your shell RC file. Make sure `~/.local/bin` is in your `PATH`.
+
 ## Quick start
 
 ```bash

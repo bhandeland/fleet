@@ -67,7 +67,8 @@ teardown() {
 @test "fleet rm auto-detects branch from worktree" {
   create_test_worktree "auto-rm"
   cd "$REPO_DIR/.worktrees/auto-rm"
-  fleet rm
+  run fleet rm
+  [ "$status" -eq 0 ]
   [ ! -d "$REPO_DIR/.worktrees/auto-rm" ]
 }
 

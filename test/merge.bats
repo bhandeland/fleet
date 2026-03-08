@@ -90,6 +90,5 @@ teardown() {
 
   cd "$wt_dir"
   fleet merge
-  # Should have merged and cd'd to repo root
   [ -f "$REPO_DIR/detect-file.txt" ]
 }
