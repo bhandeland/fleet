@@ -6,6 +6,7 @@ setup() {
   setup_repo
   load_fleet
   mock_no_cmux
+  mock_claude
 }
 
 teardown() {
