@@ -79,6 +79,8 @@ teardown() {
   local master_dir="$TEST_DIR/master-repo"
   mkdir -p "$master_dir"
   git -C "$master_dir" init -b master --quiet
+  git -C "$master_dir" config user.name "test"
+  git -C "$master_dir" config user.email "test@test"
   git -C "$master_dir" commit --allow-empty -m "initial" --quiet
 
   run _fleet_default_branch "$master_dir"

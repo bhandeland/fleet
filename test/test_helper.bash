@@ -11,6 +11,8 @@ setup_repo() {
   export REPO_DIR="$TEST_DIR/repo"
   mkdir -p "$REPO_DIR"
   git -C "$REPO_DIR" init -b main --quiet
+  git -C "$REPO_DIR" config user.name "test"
+  git -C "$REPO_DIR" config user.email "test@test"
   git -C "$REPO_DIR" commit --allow-empty -m "initial" --quiet
 
   # Ensure fleet sees this as the repo root
