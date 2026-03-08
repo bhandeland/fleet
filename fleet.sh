@@ -8,14 +8,16 @@
 #   fleet new <branch> [-p <prompt>] [--team]  — New worktree, open workspace, launch Claude
 #   fleet start <branch> [-p <prompt>]         — Focus workspace, resume Claude with --continue
 #   fleet cd [branch]                          — cd into worktree (no args = repo root)
-#   fleet ls [--status]                        — List worktrees (+ sidebar status)
+#   fleet ls [--status|--all]                  — List worktrees (--all for cross-repo)
 #   fleet merge [branch] [--squash]            — Merge worktree branch into primary checkout
 #   fleet rm [branch | --all] [-f]             — Remove worktree + workspace + branch
 #   fleet init [--replace]                     — Generate .fleet/setup hook using Claude
 #   fleet config [set <key> <value> [--global]] — View/set layout config
 #   fleet focus <branch>                       — Switch to a branch's cmux.dev workspace
-#   fleet team <branch>                        — Spawn agent team in split panes
-#   fleet status [branch]                      — Show sidebar state for a workspace
+#   fleet team <branch> [--add|--rm <role>]    — Spawn/manage agent team in split panes
+#   fleet send <branch> [--role <r>] <msg>     — Send message to pane
+#   fleet status [branch] [--json]             — Show workspace/agent/git status
+#   fleet register                             — Register current worktree with fleet
 #   fleet update / fleet version
 
 _FLEET_DOWNLOAD_URL="https://gitlab.com/nighthawk-oss/fleet/-/raw/main"
@@ -39,7 +41,9 @@ fleet() {
     config)  _fleet_config "$@" ;;
     focus)   _fleet_focus "$@" ;;
     team)    _fleet_team "$@" ;;
+    send)    _fleet_send "$@" ;;
     status)  _fleet_status "$@" ;;
+    register) _fleet_register "$@" ;;
     update)     _fleet_update "$@" ;;
     init-shell) _fleet_init_shell "$@" ;;
     version) echo "fleet $FLEET_VERSION" ;;
@@ -49,15 +53,17 @@ fleet() {
       echo "  new <branch> [-p <prompt>] [--team]  New worktree + workspace, launch Claude"
       echo "  start <branch> [-p <prompt>]         Resume Claude in existing workspace"
       echo "  cd [branch]        cd into worktree (no args = repo root)"
-      echo "  ls [--status]      List worktrees (+ sidebar status when available)"
+      echo "  ls [--status|--all]  List worktrees (--all for cross-repo)"
       echo "  merge [branch] [--squash]  Merge worktree branch into primary checkout"
       echo "  rm [branch] [-f]   Remove worktree + workspace + branch"
       echo "  rm --all           Remove ALL worktrees (requires confirmation)"
       echo "  init [--replace]   Generate .fleet/setup hook using Claude"
       echo "  config             View or set worktree layout configuration"
       echo "  focus <branch>     Switch to a branch's cmux.dev workspace"
-      echo "  team <branch>      Spawn agent team in split panes"
-      echo "  status [branch]    Show sidebar state for a workspace"
+      echo "  team <branch> [--add|--rm <role>]  Spawn/manage agent team"
+      echo "  send <branch> [--role <role>] <msg>  Send message to pane"
+      echo "  status [branch] [--json]  Show workspace/agent/git status"
+      echo "  register           Register current worktree with fleet"
       echo "  update             Update fleet to the latest version"
       echo "  version            Show current version"
       return 0
@@ -298,9 +304,17 @@ _fleet_save_state() {
   "branch": "$branch",
   "worktree_dir": "$worktree_dir",
   "workspace_id": "$workspace_id",
-  "main_surface": "$main_surface"
+  "main_surface": "$main_surface",
+  "repo_root": "$repo_root"
 }
 EOF
+}
+
+# List all state files across all repos
+_fleet_all_state_files() {
+  local state_base="$HOME/.fleet/state"
+  [[ -d "$state_base" ]] || return
+  find "$state_base" -name '*.json' -type f 2>/dev/null
 }
 
 _fleet_read_state_field() {
@@ -316,27 +330,67 @@ _fleet_rm_state() {
   rm -f "$state_file" &>/dev/null
 }
 
-# Update state file with team surface refs
-_fleet_save_team_surfaces() {
-  local state_file="$1"
-  local explorer_surface="$2" architect_surface="$3" reviewer_surface="$4"
+# Update state file: add/update a single key-value pair
+_fleet_state_set() {
+  local state_file="$1" key="$2" value="$3"
   [[ -f "$state_file" ]] || return 1
-  local branch worktree_dir workspace_id main_surface
-  branch="$(_fleet_read_state_field "$state_file" "branch")"
-  worktree_dir="$(_fleet_read_state_field "$state_file" "worktree_dir")"
-  workspace_id="$(_fleet_read_state_field "$state_file" "workspace_id")"
-  main_surface="$(_fleet_read_state_field "$state_file" "main_surface")"
-  cat > "$state_file" <<EOF
-{
-  "branch": "$branch",
-  "worktree_dir": "$worktree_dir",
-  "workspace_id": "$workspace_id",
-  "main_surface": "$main_surface",
-  "explorer_surface": "$explorer_surface",
-  "architect_surface": "$architect_surface",
-  "reviewer_surface": "$reviewer_surface"
+  if grep -q "\"$key\"" "$state_file"; then
+    # Update existing key
+    sed -i '' 's|"'"$key"'"[[:space:]]*:[[:space:]]*"[^"]*"|"'"$key"'": "'"$value"'"|' "$state_file"
+  else
+    # Insert before closing brace
+    sed -i '' 's|}|,\n  "'"$key"'": "'"$value"'"\n}|' "$state_file"
+  fi
 }
-EOF
+
+# Update state file with team surface refs (dynamic role names)
+_fleet_save_team_surfaces() {
+  local state_file="$1"; shift
+  [[ -f "$state_file" ]] || return 1
+  # Accept pairs: role_name surface_ref role_name surface_ref ...
+  while [[ $# -ge 2 ]]; do
+    local role="$1" surface="$2"; shift 2
+    _fleet_state_set "$state_file" "team_${role}_surface" "$surface"
+  done
+}
+
+# Load team roles from .fleet/team.json (project) or ~/.fleet/team.json (global)
+# Falls back to hardcoded defaults. Outputs lines: name|agent|split
+_fleet_load_team_roles() {
+  local repo_root="$1"
+  local config_file=""
+
+  # Check per-project config first
+  if [[ -n "$repo_root" && -f "$repo_root/.fleet/team.json" ]]; then
+    config_file="$repo_root/.fleet/team.json"
+  elif [[ -f "$HOME/.fleet/team.json" ]]; then
+    config_file="$HOME/.fleet/team.json"
+  fi
+
+  if [[ -n "$config_file" ]]; then
+    # Parse simple JSON array of roles
+    # Each role has: name, agent, split
+    local name="" agent="" split=""
+    while IFS= read -r line; do
+      # Trim whitespace
+      line="${line#"${line%%[![:space:]]*}"}"
+      [[ "$line" == *'"name"'* ]] && \
+        name="$(echo "$line" | sed 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+      [[ "$line" == *'"agent"'* ]] && \
+        agent="$(echo "$line" | sed 's/.*"agent"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+      [[ "$line" == *'"split"'* ]] && \
+        split="$(echo "$line" | sed 's/.*"split"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+      if [[ "$line" == *"}"* && -n "$name" ]]; then
+        echo "${name}|${agent:-claude}|${split:-right}"
+        name="" agent="" split=""
+      fi
+    done < "$config_file"
+  else
+    # Default roles matching original hardcoded behavior
+    echo "explorer|code-explorer|right"
+    echo "architect|code-architect|down"
+    echo "reviewer|code-reviewer|down"
+  fi
 }
 
 # ── Subcommands ──────────────────────────────────────────────────────
@@ -429,8 +483,13 @@ _fleet_new() {
       cmux set-status created "$(date '+%Y-%m-%d %H:%M')" --icon clock --workspace "$workspace_id" &>/dev/null
       cmux set-status status "setting up" --color "#ffcc00" --workspace "$workspace_id" &>/dev/null
 
+      # Capture main surface for fleet send
+      local main_surface=""
+      main_surface="$(cmux list-pane-surfaces --workspace "$workspace_id" 2>/dev/null \
+        | head -1 | grep -oE 'surface:[0-9]+' || true)"
+
       # Save state
-      _fleet_save_state "$repo_root" "$branch" "$worktree_dir" "$workspace_id" ""
+      _fleet_save_state "$repo_root" "$branch" "$worktree_dir" "$workspace_id" "$main_surface"
     fi
 
     # Run setup hook (synchronously in subshell)
@@ -595,14 +654,26 @@ _fleet_cd() {
 
 _fleet_ls() {
   if [[ "$1" == "--help" || "$1" == "-h" ]]; then
-    echo "Usage: fleet ls [--status]"
+    echo "Usage: fleet ls [--status] [--all]"
     echo ""
-    echo "  List all fleet worktrees. Use --status to show cmux.dev sidebar state."
+    echo "  List fleet worktrees. Use --status to show cmux.dev sidebar state."
+    echo "  Use --all to show worktrees across all repos (works from any directory)."
     return 0
   fi
 
-  local show_status=false
-  [[ "$1" == "--status" ]] && show_status=true
+  local show_status=false show_all=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --status) show_status=true; shift ;;
+      --all)    show_all=true; shift ;;
+      *)        shift ;;
+    esac
+  done
+
+  if [[ "$show_all" == true ]]; then
+    _fleet_ls_all
+    return $?
+  fi
 
   local repo_root
   repo_root="$(_fleet_repo_root)" || { echo "Not in a git repo"; return 1; }
@@ -648,6 +719,63 @@ _fleet_ls() {
   else
     git -C "$repo_root" worktree list | grep -F "$filter"
   fi
+}
+
+# Show all fleet-managed worktrees across all repos
+_fleet_ls_all() {
+  local state_base="$HOME/.fleet/state"
+  if [[ ! -d "$state_base" ]]; then
+    echo "No fleet state found."
+    return 0
+  fi
+
+  # Collect entries as "repo_root\tbranch\tworktree_dir\tstatus" lines
+  local entries=""
+  while IFS= read -r state_file; do
+    [[ -f "$state_file" ]] || continue
+    local branch worktree_dir repo_root
+    branch="$(_fleet_read_state_field "$state_file" "branch")"
+    worktree_dir="$(_fleet_read_state_field "$state_file" "worktree_dir")"
+    repo_root="$(_fleet_read_state_field "$state_file" "repo_root")"
+
+    [[ -z "$branch" ]] && continue
+
+    # Backfill repo_root from worktree_dir for old state files
+    if [[ -z "$repo_root" && -n "$worktree_dir" && -d "$worktree_dir" ]]; then
+      repo_root="$(git -C "$worktree_dir" rev-parse --git-common-dir 2>/dev/null)"
+      if [[ -n "$repo_root" ]]; then
+        repo_root="$(realpath "$(dirname "$repo_root")" 2>/dev/null)"
+        # Persist the backfill so future runs don't recalculate
+        _fleet_state_set "$state_file" "repo_root" "$repo_root"
+      fi
+    fi
+    [[ -z "$repo_root" ]] && repo_root="(unknown)"
+
+    local status_tag="ready"
+    if [[ -n "$worktree_dir" && ! -d "$worktree_dir" ]]; then
+      status_tag="gone"
+    fi
+
+    entries+="${repo_root}"$'\t'"${branch}"$'\t'"${worktree_dir:-(unknown)}"$'\t'"${status_tag}"$'\n'
+  done < <(_fleet_all_state_files)
+
+  if [[ -z "$entries" ]]; then
+    echo "No fleet worktrees found."
+    return 0
+  fi
+
+  # Get unique repos in order
+  local prev_repo=""
+  printf '%s' "$entries" | sort -t$'\t' -k1,1 -k2,2 | while IFS=$'\t' read -r repo_root branch worktree_dir status_tag; do
+    if [[ "$repo_root" != "$prev_repo" ]]; then
+      [[ -n "$prev_repo" ]] && echo ""
+      local count
+      count="$(printf '%s' "$entries" | grep -c "^${repo_root}"$'\t')"
+      echo "$repo_root ($count worktree$([ "$count" -ne 1 ] && echo 's'))"
+      prev_repo="$repo_root"
+    fi
+    printf '  %-20s %s  [%s]\n' "$branch" "$worktree_dir" "$status_tag"
+  done
 }
 
 _fleet_merge() {
@@ -1239,16 +1367,28 @@ _fleet_focus() {
 
 _fleet_team() {
   if [[ "$1" == "--help" || "$1" == "-h" ]]; then
-    echo "Usage: fleet team <branch>"
+    echo "Usage: fleet team <branch> [--add <role>] [--rm <role>]"
     echo ""
     echo "  Spawn agent team in split panes within the branch's workspace."
-    echo "  Creates explorer, architect, and reviewer agents."
+    echo "  Roles are defined in .fleet/team.json (project) or ~/.fleet/team.json (global)."
+    echo "  Default roles: explorer, architect, reviewer."
+    echo ""
+    echo "  --add <role>  Add a single agent from the team config"
+    echo "  --rm <role>   Remove a running agent pane"
     return 0
   fi
 
-  local branch="$1"
+  local branch="" add_role="" rm_role=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --add) add_role="$2"; shift 2 ;;
+      --rm)  rm_role="$2"; shift 2 ;;
+      *)     branch="$1"; shift ;;
+    esac
+  done
+
   if [[ -z "$branch" ]]; then
-    echo "Usage: fleet team <branch>"
+    echo "Usage: fleet team <branch> [--add <role>] [--rm <role>]"
     return 1
   fi
 
@@ -1274,72 +1414,140 @@ _fleet_team() {
   local worktree_dir
   worktree_dir="$(_fleet_read_state_field "$state_file" "worktree_dir")"
 
+  # Handle --rm: remove a single agent
+  if [[ -n "$rm_role" ]]; then
+    local surface_ref
+    surface_ref="$(_fleet_read_state_field "$state_file" "team_${rm_role}_surface")"
+    if [[ -z "$surface_ref" ]]; then
+      echo "No agent found for role: $rm_role"
+      return 1
+    fi
+    cmux close-surface --surface "$surface_ref" --workspace "$ws_id" &>/dev/null
+    _fleet_state_set "$state_file" "team_${rm_role}_surface" ""
+    echo "Removed agent: $rm_role"
+    return 0
+  fi
+
+  # Handle --add: add a single agent from team config
+  if [[ -n "$add_role" ]]; then
+    local found=false
+    while IFS='|' read -r name agent split; do
+      if [[ "$name" == "$add_role" ]]; then
+        found=true
+        local split_output surface_ref
+        split_output="$(cmux new-split "$split" --workspace "$ws_id" 2>/dev/null)"
+        surface_ref="$(_fleet_extract_ref "$split_output" "surface")"
+        if [[ -n "$surface_ref" ]]; then
+          cmux rename-tab --surface "$surface_ref" --workspace "$ws_id" "$name" &>/dev/null
+          cmux send --surface "$surface_ref" --workspace "$ws_id" "cd $worktree_dir && claude --agent $agent" &>/dev/null
+          cmux send-key --surface "$surface_ref" --workspace "$ws_id" Enter &>/dev/null
+          _fleet_save_team_surfaces "$state_file" "$name" "$surface_ref"
+          echo "Added agent: $name"
+        else
+          echo "Failed to create split for: $name"
+          return 1
+        fi
+        break
+      fi
+    done < <(_fleet_load_team_roles "$repo_root")
+    if [[ "$found" == false ]]; then
+      echo "Role '$add_role' not found in team config."
+      echo "Available roles:"
+      _fleet_load_team_roles "$repo_root" | while IFS='|' read -r name agent split; do
+        echo "  $name ($agent)"
+      done
+      return 1
+    fi
+    return 0
+  fi
+
+  # Default: spawn full team
   echo "Spawning agent team for $branch..."
 
-  # Create right split for explorer
-  local split_output explorer_surface
-  split_output="$(cmux new-split right --workspace "$ws_id" 2>/dev/null)"
-  explorer_surface="$(_fleet_extract_ref "$split_output" "surface")"
-  if [[ -n "$explorer_surface" ]]; then
-    cmux rename-tab --surface "$explorer_surface" --workspace "$ws_id" "explorer" &>/dev/null
-    cmux send --surface "$explorer_surface" --workspace "$ws_id" "cd $worktree_dir && claude --agent code-explorer" &>/dev/null
-    cmux send-key --surface "$explorer_surface" --workspace "$ws_id" Enter &>/dev/null
-  fi
+  local role_names=()
+  local surface_args=()
+  local prev_surface=""
+  local first=true
 
-  # Create down split from right pane for architect
-  local architect_surface
-  split_output="$(cmux new-split down --surface "$explorer_surface" --workspace "$ws_id" 2>/dev/null)"
-  architect_surface="$(_fleet_extract_ref "$split_output" "surface")"
-  if [[ -n "$architect_surface" ]]; then
-    cmux rename-tab --surface "$architect_surface" --workspace "$ws_id" "architect" &>/dev/null
-    cmux send --surface "$architect_surface" --workspace "$ws_id" "cd $worktree_dir && claude --agent code-architect" &>/dev/null
-    cmux send-key --surface "$architect_surface" --workspace "$ws_id" Enter &>/dev/null
-  fi
-
-  # Create down split from architect pane for reviewer
-  local reviewer_surface
-  split_output="$(cmux new-split down --surface "$architect_surface" --workspace "$ws_id" 2>/dev/null)"
-  reviewer_surface="$(_fleet_extract_ref "$split_output" "surface")"
-  if [[ -n "$reviewer_surface" ]]; then
-    cmux rename-tab --surface "$reviewer_surface" --workspace "$ws_id" "reviewer" &>/dev/null
-    cmux send --surface "$reviewer_surface" --workspace "$ws_id" "cd $worktree_dir && claude --agent code-reviewer" &>/dev/null
-    cmux send-key --surface "$reviewer_surface" --workspace "$ws_id" Enter &>/dev/null
-  fi
+  while IFS='|' read -r name agent split; do
+    local split_output surface_ref
+    # First role always splits from the workspace; subsequent split from previous
+    if [[ "$first" == true ]]; then
+      split_output="$(cmux new-split "$split" --workspace "$ws_id" 2>/dev/null)"
+      first=false
+    else
+      split_output="$(cmux new-split "$split" --surface "$prev_surface" --workspace "$ws_id" 2>/dev/null)"
+    fi
+    surface_ref="$(_fleet_extract_ref "$split_output" "surface")"
+    if [[ -n "$surface_ref" ]]; then
+      cmux rename-tab --surface "$surface_ref" --workspace "$ws_id" "$name" &>/dev/null
+      cmux send --surface "$surface_ref" --workspace "$ws_id" "cd $worktree_dir && claude --agent $agent" &>/dev/null
+      cmux send-key --surface "$surface_ref" --workspace "$ws_id" Enter &>/dev/null
+      prev_surface="$surface_ref"
+      role_names+=("$name")
+      surface_args+=("$name" "$surface_ref")
+    fi
+  done < <(_fleet_load_team_roles "$repo_root")
 
   # Update sidebar status
-  cmux set-status agents "explorer, architect, reviewer" --workspace "$ws_id" &>/dev/null
+  local role_list
+  role_list="$(IFS=', '; echo "${role_names[*]}")"
+  cmux set-status agents "$role_list" --workspace "$ws_id" &>/dev/null
 
   # Save surface refs to state
-  _fleet_save_team_surfaces "$state_file" "$explorer_surface" "$architect_surface" "$reviewer_surface"
+  _fleet_save_team_surfaces "$state_file" "${surface_args[@]}"
 
-  echo "Agent team launched: explorer, architect, reviewer"
+  echo "Agent team launched: $role_list"
 }
 
-_fleet_status() {
+_fleet_send() {
   if [[ "$1" == "--help" || "$1" == "-h" ]]; then
-    echo "Usage: fleet status [branch]"
+    echo "Usage: fleet send <branch> [--role <role>] [--repo <path>] <message>"
     echo ""
-    echo "  Show cmux.dev sidebar state for a workspace."
-    echo "  No args = detect from current worktree."
+    echo "  Send a message to a running pane in a branch's workspace."
+    echo "  --role <role>  Send to a specific agent (e.g. explorer, architect)"
+    echo "  --repo <path>  Target a different repo's worktree"
+    echo "  No --role sends to the main pane."
     return 0
   fi
 
   if ! _fleet_has_cmux; then
-    echo "cmux.dev is not available."
+    echo "fleet send requires cmux.dev."
+    return 1
+  fi
+
+  local branch="" role="" repo_path="" message=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --role) role="$2"; shift 2 ;;
+      --repo) repo_path="$2"; shift 2 ;;
+      *)
+        if [[ -z "$branch" ]]; then
+          branch="$1"
+        else
+          # Everything remaining is the message
+          message="$*"
+          break
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$branch" || -z "$message" ]]; then
+    echo "Usage: fleet send <branch> [--role <role>] [--repo <path>] <message>"
     return 1
   fi
 
   local repo_root
-  repo_root="$(_fleet_repo_root)" || { echo "Not in a git repo"; return 1; }
-
-  local branch="$1"
-  if [[ -z "$branch" ]]; then
-    branch="$(_fleet_detect_worktree_branch "$repo_root")"
-    if [[ -z "$branch" ]]; then
-      echo "Usage: fleet status <branch>"
-      echo "  (or run with no args from inside a worktree directory)"
+  if [[ -n "$repo_path" ]]; then
+    repo_root="$(cd "$repo_path" && git rev-parse --git-common-dir 2>/dev/null)" || {
+      echo "Not a git repo: $repo_path"
       return 1
-    fi
+    }
+    repo_root="$(cd "$repo_path" && realpath "$(dirname "$(git rev-parse --git-common-dir 2>/dev/null)")")"
+  else
+    repo_root="$(_fleet_repo_root)" || { echo "Not in a git repo"; return 1; }
   fi
 
   local state_file
@@ -1352,10 +1560,208 @@ _fleet_status() {
     return 1
   fi
 
+  local target_surface
+  if [[ -n "$role" ]]; then
+    target_surface="$(_fleet_read_state_field "$state_file" "team_${role}_surface")"
+    if [[ -z "$target_surface" ]]; then
+      echo "No agent surface found for role: $role"
+      return 1
+    fi
+  else
+    target_surface="$(_fleet_read_state_field "$state_file" "main_surface")"
+    # Fallback: discover first surface from workspace
+    if [[ -z "$target_surface" ]]; then
+      target_surface="$(cmux list-pane-surfaces --workspace "$ws_id" 2>/dev/null \
+        | head -1 | grep -oE 'surface:[0-9]+')"
+    fi
+    if [[ -z "$target_surface" ]]; then
+      echo "No surface found for branch: $branch"
+      return 1
+    fi
+  fi
+
+  cmux send --surface "$target_surface" --workspace "$ws_id" "$message" &>/dev/null
+  cmux send-key --surface "$target_surface" --workspace "$ws_id" Enter &>/dev/null
+
+  if [[ -n "$role" ]]; then
+    echo "Sent to $role ($branch): $message"
+  else
+    echo "Sent to $branch: $message"
+  fi
+}
+
+_fleet_status() {
+  if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    echo "Usage: fleet status [branch] [--json]"
+    echo ""
+    echo "  Show workspace status, agent liveness, and git info."
+    echo "  No args = detect from current worktree."
+    echo "  --json for machine-readable output."
+    return 0
+  fi
+
+  local branch="" json_mode=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json_mode=true; shift ;;
+      *)      branch="$1"; shift ;;
+    esac
+  done
+
+  local repo_root
+  repo_root="$(_fleet_repo_root)" || { echo "Not in a git repo"; return 1; }
+
+  if [[ -z "$branch" ]]; then
+    branch="$(_fleet_detect_worktree_branch "$repo_root")"
+    if [[ -z "$branch" ]]; then
+      echo "Usage: fleet status <branch> [--json]"
+      echo "  (or run with no args from inside a worktree directory)"
+      return 1
+    fi
+  fi
+
+  local state_file
+  state_file="$(_fleet_state_file "$repo_root" "$branch")"
+  local ws_id worktree_dir
+  ws_id="$(_fleet_read_state_field "$state_file" "workspace_id")"
+  worktree_dir="$(_fleet_read_state_field "$state_file" "worktree_dir")"
+
+  # Git info
+  local default_branch git_ahead git_status_short
+  default_branch="$(_fleet_default_branch "$repo_root")"
+  if [[ -n "$worktree_dir" && -d "$worktree_dir" ]]; then
+    git_ahead="$(git -C "$worktree_dir" log --oneline "${default_branch}..${branch}" 2>/dev/null | wc -l | tr -d ' ')"
+    git_status_short="$(git -C "$worktree_dir" status --short 2>/dev/null)"
+  fi
+
+  local git_clean="true"
+  [[ -n "$git_status_short" ]] && git_clean="false"
+
+  # Collect agent info
+  local agent_lines="" agent_json=""
+  if [[ -f "$state_file" ]]; then
+    while IFS= read -r line; do
+      local role_name surface_ref
+      role_name="$(echo "$line" | sed -n 's/.*"team_\(.*\)_surface".*/\1/p')"
+      [[ -z "$role_name" ]] && continue
+      surface_ref="$(_fleet_read_state_field "$state_file" "team_${role_name}_surface")"
+      [[ -z "$surface_ref" ]] && continue
+
+      local alive="unknown"
+      if _fleet_has_cmux && [[ -n "$ws_id" ]]; then
+        if cmux read-screen --surface "$surface_ref" --workspace "$ws_id" &>/dev/null; then
+          alive="alive"
+        else
+          alive="gone"
+        fi
+      fi
+
+      agent_lines+="  $(printf '%-12s %-14s %s' "$role_name" "$surface_ref" "$alive")"$'\n'
+      agent_json+="$(printf '{"role":"%s","surface":"%s","status":"%s"},' "$role_name" "$surface_ref" "$alive")"
+    done < "$state_file"
+  fi
+
+  if [[ "$json_mode" == true ]]; then
+    # Remove trailing comma from agent_json
+    agent_json="${agent_json%,}"
+    cat <<EOF
+{
+  "branch": "$branch",
+  "workspace_id": "${ws_id:-}",
+  "worktree_dir": "${worktree_dir:-}",
+  "git": {
+    "commits_ahead": ${git_ahead:-0},
+    "clean": $git_clean
+  },
+  "agents": [${agent_json}]
+}
+EOF
+    return 0
+  fi
+
   echo "Branch:    $branch"
-  echo "Workspace: $ws_id"
+  [[ -n "$ws_id" ]] && echo "Workspace: $ws_id"
+  [[ -n "$worktree_dir" ]] && echo "Worktree:  $worktree_dir"
   echo ""
-  cmux sidebar-state --workspace "$ws_id" &>/dev/null
+
+  if [[ -n "$agent_lines" ]]; then
+    echo "Agents:"
+    printf '%s' "$agent_lines"
+    echo ""
+  fi
+
+  echo "Git: ${git_ahead:-0} commits ahead of ${default_branch}, $([ "$git_clean" == "true" ] && echo "clean working tree" || echo "dirty working tree")"
+
+  if _fleet_has_cmux && [[ -n "$ws_id" ]]; then
+    echo ""
+    cmux sidebar-state --workspace "$ws_id" &>/dev/null
+  fi
+}
+
+_fleet_register() {
+  if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    echo "Usage: fleet register"
+    echo ""
+    echo "  Register the current worktree directory with fleet."
+    echo "  Creates state for worktrees not created by fleet."
+    echo "  Run from inside a git worktree directory."
+    return 0
+  fi
+
+  local repo_root
+  repo_root="$(_fleet_repo_root)" || { echo "Not in a git repo"; return 1; }
+
+  # Detect branch from current directory
+  local branch
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  if [[ -z "$branch" || "$branch" == "HEAD" ]]; then
+    echo "Could not detect branch from current directory."
+    return 1
+  fi
+
+  # Check we're actually in a worktree (not the main checkout)
+  local git_dir common_dir
+  git_dir="$(git rev-parse --git-dir 2>/dev/null)"
+  common_dir="$(git rev-parse --git-common-dir 2>/dev/null)"
+  if [[ "$(realpath "$git_dir")" == "$(realpath "$common_dir")" ]]; then
+    echo "Not in a worktree. Run this from inside a git worktree directory."
+    return 1
+  fi
+
+  local worktree_dir
+  worktree_dir="$(pwd -P)"
+
+  # Check if already registered
+  local existing_file
+  existing_file="$(_fleet_state_file "$repo_root" "$branch")"
+  if [[ -f "$existing_file" ]]; then
+    echo "Branch '$branch' is already registered with fleet."
+    return 1
+  fi
+
+  # Optionally create cmux workspace
+  local workspace_id="" main_surface=""
+  if _fleet_has_cmux; then
+    local ws_output
+    ws_output="$(cmux new-workspace 2>/dev/null)"
+    # cmux new-workspace returns "OK <uuid>"
+    workspace_id="${ws_output#OK }"
+    if [[ -z "$workspace_id" || "$workspace_id" == "$ws_output" ]]; then
+      workspace_id="$(cmux current-workspace 2>/dev/null)"
+    fi
+    if [[ -n "$workspace_id" ]]; then
+      local safe
+      safe="$(_fleet_safe_name "$branch")"
+      cmux rename-workspace --workspace "$workspace_id" "$safe" &>/dev/null
+    fi
+  fi
+
+  _fleet_save_state "$repo_root" "$branch" "$worktree_dir" "$workspace_id" "$main_surface"
+  echo "Registered worktree: $branch"
+  echo "  Directory: $worktree_dir"
+  if [[ -n "$workspace_id" ]]; then
+    echo "  Workspace: $workspace_id"
+  fi
 }
 
 _fleet_update() {
@@ -1461,8 +1867,10 @@ if [[ -n "$ZSH_VERSION" ]]; then
       'init:Generate .fleet/setup hook'
       'config:View or set configuration'
       'focus:Switch to workspace'
-      'team:Spawn agent team in split panes'
-      'status:Show sidebar state'
+      'team:Spawn/manage agent team'
+      'send:Send message to pane'
+      'status:Show workspace/agent/git status'
+      'register:Register current worktree'
       'update:Update fleet to latest version'
       'version:Show current version'
     )
@@ -1470,7 +1878,7 @@ if [[ -n "$ZSH_VERSION" ]]; then
       _describe 'fleet command' subcmds
     elif (( CURRENT == 3 )); then
       case "${words[2]}" in
-        start|cd|merge|focus|team|status)
+        start|cd|merge|focus|team|send|status)
           local -a names=( ${(f)"$(_fleet_worktree_names)"} )
           compadd -a names
           ;;
@@ -1486,29 +1894,26 @@ if [[ -n "$ZSH_VERSION" ]]; then
           compadd -- set
           ;;
         ls)
-          compadd -- --status
+          compadd -- --status --all
           ;;
       esac
-    elif (( CURRENT == 4 )); then
+    else
       case "${words[2]}" in
+        team)
+          compadd -- --add --rm
+          ;;
+        send)
+          compadd -- --role --repo
+          ;;
+        status)
+          compadd -- --json
+          ;;
         config)
-          if [[ "${words[3]}" == "set" ]]; then
+          if (( CURRENT == 4 )) && [[ "${words[3]}" == "set" ]]; then
             compadd -- layout
-          fi
-          ;;
-      esac
-    elif (( CURRENT == 5 )); then
-      case "${words[2]}" in
-        config)
-          if [[ "${words[3]}" == "set" && "${words[4]}" == "layout" ]]; then
+          elif (( CURRENT == 5 )) && [[ "${words[3]}" == "set" && "${words[4]}" == "layout" ]]; then
             compadd -- nested outer-nested sibling
-          fi
-          ;;
-      esac
-    elif (( CURRENT == 6 )); then
-      case "${words[2]}" in
-        config)
-          if [[ "${words[3]}" == "set" && "${words[4]}" == "layout" ]]; then
+          elif (( CURRENT == 6 )) && [[ "${words[3]}" == "set" && "${words[4]}" == "layout" ]]; then
             compadd -- --global
           fi
           ;;
@@ -1524,10 +1929,10 @@ elif [[ -n "$BASH_VERSION" ]]; then
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     if (( COMP_CWORD == 1 )); then
-      COMPREPLY=( $(compgen -W "new start cd ls merge rm init config focus team status update version" -- "$cur") )
+      COMPREPLY=( $(compgen -W "new start cd ls merge rm init config focus team send status register update version" -- "$cur") )
     elif (( COMP_CWORD == 2 )); then
       case "$prev" in
-        start|cd|merge|focus|team|status)
+        start|cd|merge|focus|team|send|status)
           COMPREPLY=( $(compgen -W "$(_fleet_worktree_names)" -- "$cur") )
           ;;
         rm)
@@ -1540,23 +1945,32 @@ elif [[ -n "$BASH_VERSION" ]]; then
           COMPREPLY=( $(compgen -W "set" -- "$cur") )
           ;;
         ls)
-          COMPREPLY=( $(compgen -W "--status" -- "$cur") )
+          COMPREPLY=( $(compgen -W "--status --all" -- "$cur") )
           ;;
       esac
-    elif (( COMP_CWORD == 3 )); then
-      if [[ "${COMP_WORDS[1]}" == "config" && "${COMP_WORDS[2]}" == "set" ]]; then
-        COMPREPLY=( $(compgen -W "layout" -- "$cur") )
-      fi
-    elif (( COMP_CWORD == 4 )); then
-      if [[ "${COMP_WORDS[1]}" == "config" && "${COMP_WORDS[2]}" == "set" \
-         && "${COMP_WORDS[3]}" == "layout" ]]; then
-        COMPREPLY=( $(compgen -W "nested outer-nested sibling" -- "$cur") )
-      fi
-    elif (( COMP_CWORD == 5 )); then
-      if [[ "${COMP_WORDS[1]}" == "config" && "${COMP_WORDS[2]}" == "set" \
-         && "${COMP_WORDS[3]}" == "layout" ]]; then
-        COMPREPLY=( $(compgen -W "--global" -- "$cur") )
-      fi
+    else
+      case "${COMP_WORDS[1]}" in
+        team)
+          COMPREPLY=( $(compgen -W "--add --rm" -- "$cur") )
+          ;;
+        send)
+          COMPREPLY=( $(compgen -W "--role --repo" -- "$cur") )
+          ;;
+        status)
+          COMPREPLY=( $(compgen -W "--json" -- "$cur") )
+          ;;
+        config)
+          if (( COMP_CWORD == 3 )) && [[ "${COMP_WORDS[2]}" == "set" ]]; then
+            COMPREPLY=( $(compgen -W "layout" -- "$cur") )
+          elif (( COMP_CWORD == 4 )) && [[ "${COMP_WORDS[2]}" == "set" \
+               && "${COMP_WORDS[3]}" == "layout" ]]; then
+            COMPREPLY=( $(compgen -W "nested outer-nested sibling" -- "$cur") )
+          elif (( COMP_CWORD == 5 )) && [[ "${COMP_WORDS[2]}" == "set" \
+               && "${COMP_WORDS[3]}" == "layout" ]]; then
+            COMPREPLY=( $(compgen -W "--global" -- "$cur") )
+          fi
+          ;;
+      esac
     fi
   }
   complete -F _fleet_bash_complete fleet

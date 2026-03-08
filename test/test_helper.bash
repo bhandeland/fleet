@@ -67,6 +67,9 @@ mock_cmux() {
       new-split)
         echo '{"surface": "surface:'"$RANDOM"'"}'
         ;;
+      list-pane-surfaces)
+        echo '* surface:1  ⠐ Shell  [selected]'
+        ;;
       rename-tab) return 0 ;;
       list-status) echo "task: test-branch"; echo "status: ready" ;;
       sidebar-state) echo "task: test-branch"; echo "status: ready" ;;

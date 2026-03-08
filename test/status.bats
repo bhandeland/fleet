@@ -18,22 +18,14 @@ teardown() {
   [[ "$output" == *"Usage: fleet status"* ]]
 }
 
-@test "fleet status without cmux fails" {
-  run fleet status some-branch
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"cmux.dev is not available"* ]]
-}
-
 @test "fleet status with no args outside worktree fails" {
-  mock_cmux
   cd "$REPO_DIR"
   run fleet status
   [ "$status" -eq 1 ]
   [[ "$output" == *"Usage:"* ]]
 }
 
-@test "fleet status with cmux and state shows info" {
-  mock_cmux
+@test "fleet status with state shows info" {
   create_test_worktree "status-test"
   local wt_dir
   wt_dir="$(_fleet_worktree_dir "$REPO_DIR" "status-test")"
@@ -47,15 +39,32 @@ teardown() {
   [[ "$output" == *"workspace:4"* ]]
 }
 
-@test "fleet status with no workspace state fails" {
-  mock_cmux
-  run fleet status no-state-branch
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"No workspace found"* ]]
+@test "fleet status shows git info" {
+  create_test_worktree "git-status"
+  local wt_dir
+  wt_dir="$(_fleet_worktree_dir "$REPO_DIR" "git-status")"
+  _fleet_save_state "$REPO_DIR" "git-status" "$wt_dir" "" ""
+
+  run fleet status git-status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Git:"* ]]
+  [[ "$output" == *"commits ahead"* ]]
+}
+
+@test "fleet status --json outputs json" {
+  create_test_worktree "json-status"
+  local wt_dir
+  wt_dir="$(_fleet_worktree_dir "$REPO_DIR" "json-status")"
+  _fleet_save_state "$REPO_DIR" "json-status" "$wt_dir" "workspace:5" "surface:5"
+
+  run fleet status json-status --json
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"branch": "json-status"'* ]]
+  [[ "$output" == *'"workspace_id": "workspace:5"'* ]]
+  [[ "$output" == *'"commits_ahead"'* ]]
 }
 
 @test "fleet status auto-detects from worktree" {
-  mock_cmux
   create_test_worktree "auto-status"
   local wt_dir
   wt_dir="$(_fleet_worktree_dir "$REPO_DIR" "auto-status")"
@@ -65,4 +74,21 @@ teardown() {
   run fleet status
   [ "$status" -eq 0 ]
   [[ "$output" == *"auto-status"* ]]
+}
+
+@test "fleet status with cmux shows agent liveness" {
+  mock_cmux
+  create_test_worktree "agent-status"
+  local wt_dir
+  wt_dir="$(_fleet_worktree_dir "$REPO_DIR" "agent-status")"
+  _fleet_save_state "$REPO_DIR" "agent-status" "$wt_dir" "workspace:7" "surface:7"
+  local sf
+  sf="$(_fleet_state_file "$REPO_DIR" "agent-status")"
+  _fleet_save_team_surfaces "$sf" "explorer" "surface:10" "architect" "surface:11"
+
+  run fleet status agent-status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Agents:"* ]]
+  [[ "$output" == *"explorer"* ]]
+  [[ "$output" == *"architect"* ]]
 }

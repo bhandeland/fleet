@@ -136,13 +136,13 @@ teardown() {
   _fleet_save_state "$REPO_DIR" "team-br" "/path/to/wt" "workspace:1" "surface:1"
   local sf
   sf="$(_fleet_state_file "$REPO_DIR" "team-br")"
-  _fleet_save_team_surfaces "$sf" "surface:10" "surface:11" "surface:12"
+  _fleet_save_team_surfaces "$sf" "explorer" "surface:10" "architect" "surface:11" "reviewer" "surface:12"
 
-  run _fleet_read_state_field "$sf" "explorer_surface"
+  run _fleet_read_state_field "$sf" "team_explorer_surface"
   [ "$output" = "surface:10" ]
-  run _fleet_read_state_field "$sf" "architect_surface"
+  run _fleet_read_state_field "$sf" "team_architect_surface"
   [ "$output" = "surface:11" ]
-  run _fleet_read_state_field "$sf" "reviewer_surface"
+  run _fleet_read_state_field "$sf" "team_reviewer_surface"
   [ "$output" = "surface:12" ]
 }
 
@@ -150,7 +150,7 @@ teardown() {
   _fleet_save_state "$REPO_DIR" "team-br" "/path/to/wt" "workspace:1" "surface:1"
   local sf
   sf="$(_fleet_state_file "$REPO_DIR" "team-br")"
-  _fleet_save_team_surfaces "$sf" "surface:10" "surface:11" "surface:12"
+  _fleet_save_team_surfaces "$sf" "explorer" "surface:10" "architect" "surface:11"
 
   run _fleet_read_state_field "$sf" "branch"
   [ "$output" = "team-br" ]
@@ -159,6 +159,41 @@ teardown() {
 }
 
 @test "_fleet_save_team_surfaces fails on missing file" {
-  run _fleet_save_team_surfaces "/nonexistent/file.json" "s:1" "s:2" "s:3"
+  run _fleet_save_team_surfaces "/nonexistent/file.json" "explorer" "s:1" "architect" "s:2"
   [ "$status" -ne 0 ]
+}
+
+# ── _fleet_state_set ────────────────────────────────────────────
+
+@test "_fleet_state_set adds new field to state" {
+  _fleet_save_state "$REPO_DIR" "test-br" "/path/to/wt" "workspace:1" "surface:1"
+  local sf
+  sf="$(_fleet_state_file "$REPO_DIR" "test-br")"
+  _fleet_state_set "$sf" "custom_field" "custom_value"
+  run _fleet_read_state_field "$sf" "custom_field"
+  [ "$output" = "custom_value" ]
+}
+
+@test "_fleet_state_set updates existing field" {
+  _fleet_save_state "$REPO_DIR" "test-br" "/path/to/wt" "workspace:1" "surface:1"
+  local sf
+  sf="$(_fleet_state_file "$REPO_DIR" "test-br")"
+  _fleet_state_set "$sf" "branch" "new-branch"
+  run _fleet_read_state_field "$sf" "branch"
+  [ "$output" = "new-branch" ]
+}
+
+@test "_fleet_state_set fails on missing file" {
+  run _fleet_state_set "/nonexistent/file.json" "key" "val"
+  [ "$status" -ne 0 ]
+}
+
+# ── _fleet_save_state includes repo_root ────────────────────────
+
+@test "_fleet_save_state includes repo_root" {
+  _fleet_save_state "$REPO_DIR" "test-br" "/path/to/wt" "workspace:1" "surface:1"
+  local sf
+  sf="$(_fleet_state_file "$REPO_DIR" "test-br")"
+  run _fleet_read_state_field "$sf" "repo_root"
+  [ "$output" = "$REPO_DIR" ]
 }

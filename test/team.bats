@@ -62,10 +62,10 @@ teardown() {
 
   local sf
   sf="$(_fleet_state_file "$REPO_DIR" "team-state")"
-  run _fleet_read_state_field "$sf" "explorer_surface"
+  run _fleet_read_state_field "$sf" "team_explorer_surface"
   [ -n "$output" ]
-  run _fleet_read_state_field "$sf" "architect_surface"
+  run _fleet_read_state_field "$sf" "team_architect_surface"
   [ -n "$output" ]
-  run _fleet_read_state_field "$sf" "reviewer_surface"
+  run _fleet_read_state_field "$sf" "team_reviewer_surface"
   [ -n "$output" ]
 }

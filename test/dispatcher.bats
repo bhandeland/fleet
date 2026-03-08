@@ -45,7 +45,7 @@ teardown() {
 
 @test "fleet routes to all known subcommands" {
   # Test that each subcommand is recognized (not "Unknown command")
-  for cmd in new start cd ls merge rm init init-shell config focus team status update version; do
+  for cmd in new start cd ls merge rm init init-shell config focus team send status register update version; do
     run fleet "$cmd" --help
     [[ "$output" != *"Unknown command"* ]]
   done
