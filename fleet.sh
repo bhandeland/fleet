@@ -58,7 +58,7 @@ fleet() {
       echo "  rm [branch] [-f]   Remove worktree + workspace + branch"
       echo "  rm --all           Remove ALL worktrees (requires confirmation)"
       echo "  init [--replace]   Generate .fleet/setup hook using Claude"
-      echo "  config             View or set worktree layout configuration"
+      echo "  config             View or set configuration (layout, base-branch)"
       echo "  focus <branch>     Switch to a branch's cmux.dev workspace"
       echo "  team <branch> [--add|--rm <role>]  Spawn/manage agent team"
       echo "  send <branch> [--role <role>] <msg>  Send message to pane"
@@ -90,9 +90,19 @@ _fleet_safe_name() {
   echo "${1//\//-}"
 }
 
-# Detect the default branch (main/master)
+# Detect the base branch: config > origin/HEAD > main/master
 _fleet_default_branch() {
   local repo_root="$1"
+
+  # Check config first
+  local configured
+  configured="$(_fleet_get_config "$repo_root" "base-branch" "")"
+  if [[ -n "$configured" ]]; then
+    echo "$configured"
+    return
+  fi
+
+  # Auto-detect from remote
   local default
   default="$(git -C "$repo_root" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')"
   if [[ -n "$default" ]]; then
@@ -119,19 +129,24 @@ _fleet_extract_ref() {
   printf '%s' "$text" | grep -oE "${type}:[0-9]+" | head -1
 }
 
-# Read layout config: per-project > global > default (nested)
-_fleet_get_layout() {
-  local repo_root="$1"
-  local layout=""
+# Read a config value: per-project > global > default
+_fleet_get_config() {
+  local repo_root="$1" key="$2" default="${3:-}"
+  local value=""
   # Per-project config
   if [[ -n "$repo_root" && -f "$repo_root/.fleet/config.json" ]]; then
-    layout="$(grep '"layout"' "$repo_root/.fleet/config.json" 2>/dev/null | sed 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+    value="$(grep "\"$key\"" "$repo_root/.fleet/config.json" 2>/dev/null | sed 's/.*"'"$key"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
   fi
   # Global config fallback
-  if [[ -z "$layout" && -f "$HOME/.fleet/config.json" ]]; then
-    layout="$(grep '"layout"' "$HOME/.fleet/config.json" 2>/dev/null | sed 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+  if [[ -z "$value" && -f "$HOME/.fleet/config.json" ]]; then
+    value="$(grep "\"$key\"" "$HOME/.fleet/config.json" 2>/dev/null | sed 's/.*"'"$key"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
   fi
-  echo "${layout:-nested}"
+  echo "${value:-$default}"
+}
+
+# Read layout config: per-project > global > default (nested)
+_fleet_get_layout() {
+  _fleet_get_config "$1" "layout" "nested"
 }
 
 # Return the base directory that contains worktrees
@@ -1242,52 +1257,58 @@ _fleet_config() {
   repo_root="$(_fleet_repo_root 2>/dev/null)"
 
   if [[ -z "$1" ]]; then
-    local layout source
-    if [[ -n "$repo_root" && -f "$repo_root/.fleet/config.json" ]] \
-       && grep -q '"layout"' "$repo_root/.fleet/config.json" &>/dev/null; then
-      layout="$(grep '"layout"' "$repo_root/.fleet/config.json" | sed 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
-      source="$repo_root/.fleet/config.json"
-    elif [[ -f "$HOME/.fleet/config.json" ]] \
-       && grep -q '"layout"' "$HOME/.fleet/config.json" &>/dev/null; then
-      layout="$(grep '"layout"' "$HOME/.fleet/config.json" | sed 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
-      source="~/.fleet/config.json"
-    else
-      layout="nested"
-      source="default"
-    fi
-    echo "layout=$layout (source: $source)"
+    _fleet_config_show "$repo_root"
+    return 0
+  fi
+
+  if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    _fleet_config_usage
     return 0
   fi
 
   if [[ "$1" != "set" ]]; then
-    echo "Usage: fleet config                               Show effective layout"
-    echo "       fleet config set layout <preset>            Set per-project"
-    echo "       fleet config set layout <preset> --global   Set global default"
-    echo ""
-    echo "Presets: nested, outer-nested, sibling"
+    _fleet_config_usage
     return 1
   fi
   shift
 
   local global=false
-  local key="" preset=""
+  local key="" value=""
   for arg in "$@"; do
     case "$arg" in
       --global) global=true ;;
-      layout)   key="layout" ;;
-      *)        preset="$arg" ;;
+      *)
+        if [[ -z "$key" ]]; then
+          key="$arg"
+        else
+          value="$arg"
+        fi
+        ;;
     esac
   done
 
-  if [[ "$key" != "layout" || -z "$preset" ]]; then
-    echo "Usage: fleet config set layout <preset> [--global]"
+  if [[ -z "$key" || -z "$value" ]]; then
+    _fleet_config_usage
     return 1
   fi
-  case "$preset" in
-    nested|outer-nested|sibling) ;;
+
+  # Validate key and value
+  case "$key" in
+    layout)
+      case "$value" in
+        nested|outer-nested|sibling) ;;
+        *)
+          echo "Invalid layout: $value"
+          echo "Valid presets: nested, outer-nested, sibling"
+          return 1
+          ;;
+      esac
+      ;;
+    base-branch)
+      ;; # any value accepted
     *)
-      echo "Invalid layout: $preset"
-      echo "Valid presets: nested, outer-nested, sibling"
+      echo "Unknown config key: $key"
+      echo "Valid keys: layout, base-branch"
       return 1
       ;;
   esac
@@ -1305,7 +1326,8 @@ _fleet_config() {
     mkdir -p "$repo_root/.fleet"
   fi
 
-  if [[ -n "$repo_root" ]]; then
+  # Layout-specific warning
+  if [[ "$key" == "layout" && -n "$repo_root" ]]; then
     local base_dir
     base_dir="$(_fleet_worktree_base "$repo_root")"
     local existing
@@ -1316,17 +1338,69 @@ _fleet_config() {
     fi
   fi
 
-  if [[ -f "$config_file" ]] && grep -q '"layout"' "$config_file" &>/dev/null; then
+  if [[ -f "$config_file" ]] && grep -q "\"$key\"" "$config_file" &>/dev/null; then
     local tmp
     tmp="$(mktemp)"
-    sed 's/"layout"[[:space:]]*:[[:space:]]*"[^"]*"/"layout": "'"$preset"'"/' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+    sed 's|"'"$key"'"[[:space:]]*:[[:space:]]*"[^"]*"|"'"$key"'": "'"$value"'"|' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
+  elif [[ -f "$config_file" ]]; then
+    # Add key to existing config
+    local tmp
+    tmp="$(mktemp)"
+    sed 's|}$|,\n  "'"$key"'": "'"$value"'"\n}|' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
   else
-    printf '{\n  "layout": "%s"\n}\n' "$preset" > "$config_file"
+    printf '{\n  "%s": "%s"\n}\n' "$key" "$value" > "$config_file"
   fi
 
   local target="per-project"
   [[ "$global" == true ]] && target="global"
-  echo "Set $target layout to: $preset"
+  echo "Set $target $key to: $value"
+}
+
+_fleet_config_show() {
+  local repo_root="$1"
+
+  # Show all config values with sources
+  local layout base_branch layout_source base_branch_source
+
+  # Layout
+  if [[ -n "$repo_root" && -f "$repo_root/.fleet/config.json" ]] \
+     && grep -q '"layout"' "$repo_root/.fleet/config.json" &>/dev/null; then
+    layout="$(grep '"layout"' "$repo_root/.fleet/config.json" | sed 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+    layout_source="$repo_root/.fleet/config.json"
+  elif [[ -f "$HOME/.fleet/config.json" ]] \
+     && grep -q '"layout"' "$HOME/.fleet/config.json" &>/dev/null; then
+    layout="$(grep '"layout"' "$HOME/.fleet/config.json" | sed 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+    layout_source="~/.fleet/config.json"
+  else
+    layout="nested"
+    layout_source="default"
+  fi
+
+  # Base branch
+  if [[ -n "$repo_root" && -f "$repo_root/.fleet/config.json" ]] \
+     && grep -q '"base-branch"' "$repo_root/.fleet/config.json" &>/dev/null; then
+    base_branch="$(grep '"base-branch"' "$repo_root/.fleet/config.json" | sed 's/.*"base-branch"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+    base_branch_source="$repo_root/.fleet/config.json"
+  elif [[ -f "$HOME/.fleet/config.json" ]] \
+     && grep -q '"base-branch"' "$HOME/.fleet/config.json" &>/dev/null; then
+    base_branch="$(grep '"base-branch"' "$HOME/.fleet/config.json" | sed 's/.*"base-branch"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+    base_branch_source="~/.fleet/config.json"
+  else
+    base_branch="$(_fleet_default_branch "$repo_root" 2>/dev/null)"
+    base_branch_source="auto-detected"
+  fi
+
+  echo "layout=$layout (source: $layout_source)"
+  echo "base-branch=${base_branch:-main} (source: $base_branch_source)"
+}
+
+_fleet_config_usage() {
+  echo "Usage: fleet config                                     Show effective config"
+  echo "       fleet config set <key> <value> [--global]        Set config value"
+  echo ""
+  echo "Keys:"
+  echo "  layout        Worktree layout: nested, outer-nested, sibling"
+  echo "  base-branch   Branch to base new worktrees on (default: auto-detect)"
 }
 
 _fleet_focus() {
@@ -1910,10 +1984,12 @@ if [[ -n "$ZSH_VERSION" ]]; then
           ;;
         config)
           if (( CURRENT == 4 )) && [[ "${words[3]}" == "set" ]]; then
-            compadd -- layout
+            compadd -- layout base-branch
           elif (( CURRENT == 5 )) && [[ "${words[3]}" == "set" && "${words[4]}" == "layout" ]]; then
             compadd -- nested outer-nested sibling
-          elif (( CURRENT == 6 )) && [[ "${words[3]}" == "set" && "${words[4]}" == "layout" ]]; then
+          elif (( CURRENT == 5 )) && [[ "${words[3]}" == "set" && "${words[4]}" == "base-branch" ]]; then
+            compadd -- main master development
+          elif (( CURRENT == 6 )) && [[ "${words[3]}" == "set" ]]; then
             compadd -- --global
           fi
           ;;
@@ -1961,12 +2037,14 @@ elif [[ -n "$BASH_VERSION" ]]; then
           ;;
         config)
           if (( COMP_CWORD == 3 )) && [[ "${COMP_WORDS[2]}" == "set" ]]; then
-            COMPREPLY=( $(compgen -W "layout" -- "$cur") )
+            COMPREPLY=( $(compgen -W "layout base-branch" -- "$cur") )
           elif (( COMP_CWORD == 4 )) && [[ "${COMP_WORDS[2]}" == "set" \
                && "${COMP_WORDS[3]}" == "layout" ]]; then
             COMPREPLY=( $(compgen -W "nested outer-nested sibling" -- "$cur") )
-          elif (( COMP_CWORD == 5 )) && [[ "${COMP_WORDS[2]}" == "set" \
-               && "${COMP_WORDS[3]}" == "layout" ]]; then
+          elif (( COMP_CWORD == 4 )) && [[ "${COMP_WORDS[2]}" == "set" \
+               && "${COMP_WORDS[3]}" == "base-branch" ]]; then
+            COMPREPLY=( $(compgen -W "main master development" -- "$cur") )
+          elif (( COMP_CWORD == 5 )) && [[ "${COMP_WORDS[2]}" == "set" ]]; then
             COMPREPLY=( $(compgen -W "--global" -- "$cur") )
           fi
           ;;

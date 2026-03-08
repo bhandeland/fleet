@@ -102,3 +102,74 @@ teardown() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"--global"* ]]
 }
+
+# ── base-branch config ──────────────────────────────────────────
+
+@test "fleet config shows base-branch" {
+  run fleet config
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"base-branch="* ]]
+}
+
+@test "fleet config set base-branch per-project" {
+  fleet config set base-branch development
+  [ -f "$REPO_DIR/.fleet/config.json" ]
+  run grep '"base-branch"' "$REPO_DIR/.fleet/config.json"
+  [[ "$output" == *"development"* ]]
+}
+
+@test "fleet config set base-branch --global" {
+  fleet config set base-branch master --global
+  [ -f "$HOME/.fleet/config.json" ]
+  run grep '"base-branch"' "$HOME/.fleet/config.json"
+  [[ "$output" == *"master"* ]]
+}
+
+@test "fleet config set base-branch updates existing config" {
+  fleet config set base-branch development
+  fleet config set base-branch release/v2
+  run fleet config
+  [[ "$output" == *"base-branch=release/v2"* ]]
+}
+
+@test "fleet config set unknown key fails" {
+  run fleet config set bogus-key value
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Unknown config key"* ]]
+}
+
+@test "fleet config set base-branch alongside layout" {
+  fleet config set layout sibling
+  fleet config set base-branch master
+  run fleet config
+  [[ "$output" == *"layout=sibling"* ]]
+  [[ "$output" == *"base-branch=master"* ]]
+}
+
+# ── _fleet_default_branch respects config ───────────────────────
+
+@test "_fleet_default_branch uses configured base-branch" {
+  mkdir -p "$REPO_DIR/.fleet"
+  printf '{\n  "base-branch": "development"\n}\n' > "$REPO_DIR/.fleet/config.json"
+  run _fleet_default_branch "$REPO_DIR"
+  [ "$output" = "development" ]
+}
+
+@test "_fleet_default_branch uses global base-branch" {
+  printf '{\n  "base-branch": "master"\n}\n' > "$HOME/.fleet/config.json"
+  run _fleet_default_branch "$REPO_DIR"
+  [ "$output" = "master" ]
+}
+
+@test "_fleet_default_branch prefers project over global" {
+  mkdir -p "$REPO_DIR/.fleet"
+  printf '{\n  "base-branch": "develop"\n}\n' > "$REPO_DIR/.fleet/config.json"
+  printf '{\n  "base-branch": "master"\n}\n' > "$HOME/.fleet/config.json"
+  run _fleet_default_branch "$REPO_DIR"
+  [ "$output" = "develop" ]
+}
+
+@test "_fleet_default_branch falls back to auto-detect without config" {
+  run _fleet_default_branch "$REPO_DIR"
+  [ "$output" = "main" ]
+}
