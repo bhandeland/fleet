@@ -1,0 +1,24 @@
+stages:
+  - release
+
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+  script:
+    - echo "Creating release for $CI_COMMIT_TAG"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    description: "Release $CI_COMMIT_TAG"
+    assets:
+      links:
+        - name: fleet.sh
+          url: "${CI_PROJECT_URL}/-/raw/${CI_COMMIT_TAG}/fleet.sh"
+          link_type: other
+        - name: install.sh
+          url: "${CI_PROJECT_URL}/-/raw/${CI_COMMIT_TAG}/install.sh"
+          link_type: other
+        - name: VERSION
+          url: "${CI_PROJECT_URL}/-/raw/${CI_COMMIT_TAG}/VERSION"
+          link_type: other

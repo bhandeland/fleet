@@ -1,0 +1,24 @@
+#!/bin/bash
+# Example .fleet/setup hook for a Node.js project
+# Copy this to your repo as .fleet/setup and customize
+
+REPO_ROOT="$(git rev-parse --git-common-dir | xargs dirname)"
+
+# Symlink gitignored secrets from main checkout
+ln -sf "$REPO_ROOT/.env" .env
+ln -sf "$REPO_ROOT/.env.local" .env.local 2>/dev/null
+ln -sf "$REPO_ROOT/.dev.vars" .dev.vars 2>/dev/null
+
+# Install dependencies
+if [[ -f "package-lock.json" ]]; then
+  npm ci
+elif [[ -f "yarn.lock" ]]; then
+  yarn install --frozen-lockfile
+elif [[ -f "pnpm-lock.yaml" ]]; then
+  pnpm install --frozen-lockfile
+elif [[ -f "bun.lockb" ]]; then
+  bun install --frozen-lockfile
+fi
+
+# Run codegen if applicable
+[[ -f "prisma/schema.prisma" ]] && npx prisma generate
