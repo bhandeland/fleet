@@ -53,8 +53,8 @@ fleet() {
       echo "  new <branch> [-p <prompt>] [--team]  New worktree + workspace, launch Claude"
       echo "  start <branch> [-p <prompt>]         Resume Claude in existing workspace"
       echo "  cd [branch]        cd into worktree (no args = repo root)"
-      echo "  ls [--status|--all]  List worktrees (--all for cross-repo)"
-      echo "  merge [branch] [--squash]  Merge worktree branch into primary checkout"
+      echo "  ls [--status|--all|--prune]  List worktrees (--all cross-repo)"
+      echo "  merge [branch] [--title <t>]  Push branch + create PR/MR"
       echo "  rm [branch] [-f]   Remove worktree + workspace + branch"
       echo "  rm --all           Remove ALL worktrees (requires confirmation)"
       echo "  init [--replace]   Generate .fleet/setup hook using Claude"
@@ -673,24 +673,31 @@ _fleet_cd() {
 
 _fleet_ls() {
   if [[ "$1" == "--help" || "$1" == "-h" ]]; then
-    echo "Usage: fleet ls [--status] [--all]"
+    echo "Usage: fleet ls [--status] [--all] [--prune]"
     echo ""
     echo "  List fleet worktrees. Use --status to show cmux.dev sidebar state."
     echo "  Use --all to show worktrees across all repos (works from any directory)."
+    echo "  Use --prune to remove state for worktrees that no longer exist."
     return 0
   fi
 
-  local show_status=false show_all=false
+  local show_status=false show_all=false prune=false
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --status) show_status=true; shift ;;
       --all)    show_all=true; shift ;;
+      --prune)  prune=true; shift ;;
       *)        shift ;;
     esac
   done
 
+  if [[ "$prune" == true ]]; then
+    _fleet_prune_state
+    return $?
+  fi
+
   if [[ "$show_all" == true ]]; then
-    _fleet_ls_all
+    _fleet_ls_all "$show_status"
     return $?
   fi
 
@@ -742,20 +749,23 @@ _fleet_ls() {
 
 # Show all fleet-managed worktrees across all repos
 _fleet_ls_all() {
+  local show_status="${1:-false}"
   local state_base="$HOME/.fleet/state"
   if [[ ! -d "$state_base" ]]; then
     echo "No fleet state found."
     return 0
   fi
 
-  # Collect entries as "repo_root\tbranch\tworktree_dir\tstatus" lines
+  # Collect entries as "repo_root\tbranch\tworktree_dir\tstatus\tws_id\tbase_branch" lines
   local entries=""
   while IFS= read -r state_file; do
     [[ -f "$state_file" ]] || continue
-    local branch worktree_dir repo_root
+    local branch worktree_dir repo_root ws_id base_branch
     branch="$(_fleet_read_state_field "$state_file" "branch")"
     worktree_dir="$(_fleet_read_state_field "$state_file" "worktree_dir")"
     repo_root="$(_fleet_read_state_field "$state_file" "repo_root")"
+    ws_id="$(_fleet_read_state_field "$state_file" "workspace_id")"
+    base_branch="$(_fleet_read_state_field "$state_file" "base_branch")"
 
     [[ -z "$branch" ]] && continue
 
@@ -764,7 +774,6 @@ _fleet_ls_all() {
       repo_root="$(git -C "$worktree_dir" rev-parse --git-common-dir 2>/dev/null)"
       if [[ -n "$repo_root" ]]; then
         repo_root="$(realpath "$(dirname "$repo_root")" 2>/dev/null)"
-        # Persist the backfill so future runs don't recalculate
         _fleet_state_set "$state_file" "repo_root" "$repo_root"
       fi
     fi
@@ -775,7 +784,7 @@ _fleet_ls_all() {
       status_tag="gone"
     fi
 
-    entries+="${repo_root}"$'\t'"${branch}"$'\t'"${worktree_dir:-(unknown)}"$'\t'"${status_tag}"$'\n'
+    entries+="${repo_root}"$'\t'"${branch}"$'\t'"${worktree_dir:-(unknown)}"$'\t'"${status_tag}"$'\t'"${ws_id}"$'\t'"${base_branch:--}"$'\n'
   done < <(_fleet_all_state_files)
 
   if [[ -z "$entries" ]]; then
@@ -785,7 +794,7 @@ _fleet_ls_all() {
 
   # Get unique repos in order
   local prev_repo=""
-  printf '%s' "$entries" | sort -t$'\t' -k1,1 -k2,2 | while IFS=$'\t' read -r repo_root branch worktree_dir status_tag; do
+  printf '%s' "$entries" | sort -t$'\t' -k1,1 -k2,2 | while IFS=$'\t' read -r repo_root branch worktree_dir status_tag ws_id base_branch; do
     if [[ "$repo_root" != "$prev_repo" ]]; then
       [[ -n "$prev_repo" ]] && echo ""
       local count
@@ -793,25 +802,65 @@ _fleet_ls_all() {
       echo "$repo_root ($count worktree$([ "$count" -ne 1 ] && echo 's'))"
       prev_repo="$repo_root"
     fi
-    printf '  %-20s %s  [%s]\n' "$branch" "$worktree_dir" "$status_tag"
+    local detail=""
+    [[ "$base_branch" != "-" ]] && detail=" ← $base_branch"
+    if [[ "$show_status" == true && -n "$ws_id" ]] && _fleet_has_cmux; then
+      printf '  %-20s %s  [%s]  {%s}%s\n' "$branch" "$worktree_dir" "$status_tag" "$ws_id" "$detail"
+    else
+      printf '  %-20s %s  [%s]%s\n' "$branch" "$worktree_dir" "$status_tag" "$detail"
+    fi
   done
+}
+
+# Remove state files for worktrees that no longer exist
+_fleet_prune_state() {
+  local state_base="$HOME/.fleet/state"
+  if [[ ! -d "$state_base" ]]; then
+    echo "No fleet state found."
+    return 0
+  fi
+
+  local pruned=0
+  while IFS= read -r state_file; do
+    [[ -f "$state_file" ]] || continue
+    local branch worktree_dir
+    branch="$(_fleet_read_state_field "$state_file" "branch")"
+    worktree_dir="$(_fleet_read_state_field "$state_file" "worktree_dir")"
+
+    if [[ -n "$worktree_dir" && ! -d "$worktree_dir" ]]; then
+      echo "Pruned: $branch ($worktree_dir)"
+      rm -f "$state_file"
+      pruned=$((pruned + 1))
+    fi
+  done < <(_fleet_all_state_files)
+
+  if [[ "$pruned" -eq 0 ]]; then
+    echo "Nothing to prune."
+  else
+    echo "Pruned $pruned stale state file$([ "$pruned" -ne 1 ] && echo 's')."
+  fi
+
+  # Clean up empty state directories
+  find "$state_base" -type d -empty -delete 2>/dev/null
 }
 
 _fleet_merge() {
   if [[ "$1" == "--help" || "$1" == "-h" ]]; then
-    echo "Usage: fleet merge [branch] [--squash]"
+    echo "Usage: fleet merge [branch] [--title <title>]"
     echo ""
-    echo "  Merge a worktree branch into the primary checkout."
+    echo "  Push the branch and create a pull/merge request."
+    echo "  Uses 'gh' (GitHub) or 'glab' (GitLab) — whichever is available."
     echo "  Run with no args from inside a worktree directory to auto-detect."
+    echo ""
+    echo "  --title <title>  PR/MR title (default: branch name)"
     return 0
   fi
-  local branch=""
-  local squash=false
+  local branch="" title=""
 
-  for arg in "$@"; do
-    case "$arg" in
-      --squash) squash=true ;;
-      *)        branch="$arg" ;;
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --title) title="$2"; shift 2 ;;
+      *)       branch="$1"; shift ;;
     esac
   done
 
@@ -821,7 +870,7 @@ _fleet_merge() {
   if [[ -z "$branch" ]]; then
     branch="$(_fleet_detect_worktree_branch "$repo_root")"
     if [[ -z "$branch" ]]; then
-      echo "Usage: fleet merge <branch> [--squash]"
+      echo "Usage: fleet merge [branch] [--title <title>]"
       echo "  (or run with no args from inside a worktree directory)"
       return 1
     fi
@@ -839,37 +888,51 @@ _fleet_merge() {
   if ! git -C "$worktree_dir" diff --quiet &>/dev/null || \
      ! git -C "$worktree_dir" diff --cached --quiet &>/dev/null; then
     echo "Worktree has uncommitted changes: $worktree_dir"
-    echo "Commit or stash them before merging."
+    echo "Commit or stash them before creating PR/MR."
     return 1
   fi
 
-  local target_branch
-  target_branch="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null)"
-  if [[ -z "$target_branch" ]]; then
-    echo "Could not determine branch in main checkout."
-    return 1
-  fi
+  # Determine target branch from state or config
+  local state_file target_branch
+  state_file="$(_fleet_state_file "$repo_root" "$branch")"
+  target_branch="$(_fleet_read_state_field "$state_file" "base_branch")"
+  [[ -z "$target_branch" ]] && target_branch="$(_fleet_default_branch "$repo_root")"
 
-  if [[ "$branch" == "$target_branch" ]]; then
-    echo "Cannot merge '$branch' into itself."
-    return 1
-  fi
+  [[ -z "$title" ]] && title="$branch"
 
-  echo "Merging '$branch' into '$target_branch'..."
+  # Push the branch
+  echo "Pushing '$branch'..."
+  git -C "$worktree_dir" push -u origin "$branch" || return 1
 
-  if [[ "$squash" == true ]]; then
-    git -C "$repo_root" merge --squash "$branch" || return 1
-    echo ""
-    echo "Squash merge staged. Review and commit the changes:"
-    echo "  cd $repo_root && git commit"
+  # Detect forge tool
+  if command -v gh &>/dev/null; then
+    echo "Creating pull request: $branch → $target_branch"
+    gh pr create \
+      --head "$branch" \
+      --base "$target_branch" \
+      --title "$title" \
+      --fill \
+      --repo "$(git -C "$repo_root" remote get-url origin 2>/dev/null)" \
+      2>&1
+  elif command -v glab &>/dev/null; then
+    echo "Creating merge request: $branch → $target_branch"
+    glab mr create \
+      --source-branch "$branch" \
+      --target-branch "$target_branch" \
+      --title "$title" \
+      --fill \
+      2>&1
   else
-    git -C "$repo_root" merge "$branch" || return 1
-    echo "Merged '$branch' into '$target_branch'."
+    echo "Branch pushed. No CLI tool found to create PR/MR."
+    echo "Install 'gh' (GitHub) or 'glab' (GitLab) to create PRs/MRs automatically."
+    echo ""
+    echo "  Branch: $branch → $target_branch"
+    return 0
   fi
 
   # Notify via cmux.dev if available
   if _fleet_has_cmux; then
-    cmux notify --title "fleet" --body "Merged $branch into $target_branch" &>/dev/null
+    cmux notify --title "fleet" --body "PR created: $branch → $target_branch" &>/dev/null
   fi
 }
 
@@ -939,16 +1002,18 @@ _fleet_rm() {
   fi
 
   # Close cmux.dev workspace if available
+  local state_file
+  state_file="$(_fleet_state_file "$repo_root" "$branch")"
   if _fleet_has_cmux; then
-    local state_file
-    state_file="$(_fleet_state_file "$repo_root" "$branch")"
     local ws_id
     ws_id="$(_fleet_read_state_field "$state_file" "workspace_id")"
     if [[ -n "$ws_id" ]]; then
       cmux close-workspace --workspace "$ws_id" &>/dev/null
     fi
-    _fleet_rm_state "$repo_root" "$branch"
   fi
+
+  # Always clean state
+  _fleet_rm_state "$repo_root" "$branch"
 
   if git -C "$repo_root" worktree remove "${remove_args[@]}"; then
     git -C "$repo_root" branch -d "$branch" &>/dev/null
@@ -1035,17 +1100,19 @@ _fleet_rm_all() {
       [[ -n "$hook" ]] && ( cd "${dirs[$i]}" && "$hook" )
     fi
 
-    # Close cmux.dev workspace
+    # Close cmux.dev workspace if available
+    local state_file
+    state_file="$(_fleet_state_file "$repo_root" "${branches[$i]}")"
     if _fleet_has_cmux; then
-      local state_file
-      state_file="$(_fleet_state_file "$repo_root" "${branches[$i]}")"
       local ws_id
       ws_id="$(_fleet_read_state_field "$state_file" "workspace_id")"
       if [[ -n "$ws_id" ]]; then
         cmux close-workspace --workspace "$ws_id" &>/dev/null
       fi
-      _fleet_rm_state "$repo_root" "${branches[$i]}"
     fi
+
+    # Always clean state
+    _fleet_rm_state "$repo_root" "${branches[$i]}"
 
     if git -C "$repo_root" worktree remove --force "${dirs[$i]}" &>/dev/null; then
       git -C "$repo_root" branch -d "${branches[$i]}" &>/dev/null
@@ -1945,7 +2012,7 @@ if [[ -n "$ZSH_VERSION" ]]; then
       'start:Resume Claude in existing workspace'
       'cd:cd into worktree'
       'ls:List worktrees'
-      'merge:Merge worktree branch into primary checkout'
+      'merge:Push branch + create PR/MR'
       'rm:Remove worktree + workspace + branch'
       'init:Generate .fleet/setup hook'
       'config:View or set configuration'
@@ -1977,11 +2044,14 @@ if [[ -n "$ZSH_VERSION" ]]; then
           compadd -- set
           ;;
         ls)
-          compadd -- --status --all
+          compadd -- --status --all --prune
           ;;
       esac
     else
       case "${words[2]}" in
+        merge)
+          compadd -- --title
+          ;;
         team)
           compadd -- --add --rm
           ;;
@@ -2030,11 +2100,14 @@ elif [[ -n "$BASH_VERSION" ]]; then
           COMPREPLY=( $(compgen -W "set" -- "$cur") )
           ;;
         ls)
-          COMPREPLY=( $(compgen -W "--status --all" -- "$cur") )
+          COMPREPLY=( $(compgen -W "--status --all --prune" -- "$cur") )
           ;;
       esac
     else
       case "${COMP_WORDS[1]}" in
+        merge)
+          COMPREPLY=( $(compgen -W "--title" -- "$cur") )
+          ;;
         team)
           COMPREPLY=( $(compgen -W "--add --rm" -- "$cur") )
           ;;

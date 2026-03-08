@@ -109,6 +109,24 @@ teardown() {
 
 # ── fleet rm --all ───────────────────────────────────────────────
 
+@test "fleet rm cleans state without cmux" {
+  create_test_worktree "state-rm"
+  local wt_dir
+  wt_dir="$(_fleet_worktree_dir "$REPO_DIR" "state-rm")"
+  _fleet_save_state "$REPO_DIR" "state-rm" "$wt_dir" "workspace:99" "surface:99"
+
+  local sf
+  sf="$(_fleet_state_file "$REPO_DIR" "state-rm")"
+  [ -f "$sf" ]
+
+  cd "$REPO_DIR"
+  fleet rm state-rm
+  [ ! -f "$sf" ]
+  [ ! -d "$wt_dir" ]
+}
+
+# ── fleet rm --all ───────────────────────────────────────────────
+
 @test "fleet rm --all with no worktrees succeeds" {
   run fleet rm --all
   [ "$status" -eq 0 ]

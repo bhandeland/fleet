@@ -8,12 +8,12 @@ fleet is a pure Bash shell tool that manages git worktree lifecycles for paralle
 
 ## Architecture
 
-**Single-file shell executable** — all logic lives in `fleet.sh` (~1900 lines), installed as `~/.local/bin/fleet`. A thin shell wrapper (output by `fleet init-shell`, loaded via `eval "$(fleet init-shell)"` in `.zshrc`/`.bashrc`) intercepts `fleet cd` to change the parent shell's directory; all other commands run as a subprocess.
+**Single-file shell executable** — all logic lives in `fleet.sh` (~2100 lines), installed as `~/.local/bin/fleet`. A thin shell wrapper (output by `fleet init-shell`, loaded via `eval "$(fleet init-shell)"` in `.zshrc`/`.bashrc`) intercepts `fleet cd` to change the parent shell's directory; all other commands run as a subprocess.
 
 **Function structure:**
 - `fleet()` — public dispatcher, routes subcommands to `_fleet_<cmd>` functions
-- `_fleet_*()` — private functions: `_fleet_new`, `_fleet_start`, `_fleet_cd`, `_fleet_ls`, `_fleet_ls_all`, `_fleet_merge`, `_fleet_rm`, `_fleet_rm_all`, `_fleet_init`, `_fleet_init_shell`, `_fleet_config`, `_fleet_focus`, `_fleet_team`, `_fleet_send`, `_fleet_status`, `_fleet_register`, `_fleet_update`
-- Helpers: `_fleet_repo_root`, `_fleet_safe_name`, `_fleet_default_branch`, `_fleet_has_cmux`, `_fleet_worktree_dir`, `_fleet_spinner_start/stop`, `_fleet_find_hook`, `_fleet_load_team_roles`, `_fleet_all_state_files`
+- `_fleet_*()` — private functions: `_fleet_new`, `_fleet_start`, `_fleet_cd`, `_fleet_ls`, `_fleet_ls_all`, `_fleet_prune_state`, `_fleet_merge`, `_fleet_rm`, `_fleet_rm_all`, `_fleet_init`, `_fleet_init_shell`, `_fleet_config`, `_fleet_focus`, `_fleet_team`, `_fleet_send`, `_fleet_status`, `_fleet_register`, `_fleet_update`
+- Helpers: `_fleet_repo_root`, `_fleet_safe_name`, `_fleet_default_branch`, `_fleet_has_cmux`, `_fleet_worktree_dir`, `_fleet_spinner_start/stop`, `_fleet_find_hook`, `_fleet_load_team_roles`, `_fleet_all_state_files`, `_fleet_get_config`
 - State management: `_fleet_save_state`, `_fleet_read_state_field`, `_fleet_state_set`, `_fleet_rm_state`, `_fleet_save_team_surfaces`
 
 **Key design patterns:**
@@ -38,6 +38,7 @@ fleet is a pure Bash shell tool that manages git worktree lifecycles for paralle
 - `.fleet/team.json` — project-specific team role config (optional, committed to repo)
 - `~/.fleet/team.json` — global team role config (fallback)
 - `examples/setup-node` — example setup hook for Node.js projects
+- `examples/team.json` — example team role config
 
 ## Shell conventions
 

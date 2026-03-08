@@ -1,0 +1,7 @@
+{
+  "roles": [
+    { "name": "explorer", "agent": "code-explorer", "split": "right" },
+    { "name": "architect", "agent": "code-architect", "split": "down" },
+    { "name": "reviewer", "agent": "code-reviewer", "split": "down" }
+  ]
+}
