@@ -43,23 +43,37 @@ teardown() {
   create_test_worktree "git-status"
   local wt_dir
   wt_dir="$(_fleet_worktree_dir "$REPO_DIR" "git-status")"
-  _fleet_save_state "$REPO_DIR" "git-status" "$wt_dir" "" ""
+  _fleet_save_state "$REPO_DIR" "git-status" "$wt_dir" "" "" "main"
 
   run fleet status git-status
   [ "$status" -eq 0 ]
+  [[ "$output" == *"Parent:"* ]]
   [[ "$output" == *"Git:"* ]]
   [[ "$output" == *"commits ahead"* ]]
 }
 
-@test "fleet status --json outputs json" {
+@test "fleet status shows stored base branch" {
+  create_test_worktree "base-test"
+  local wt_dir
+  wt_dir="$(_fleet_worktree_dir "$REPO_DIR" "base-test")"
+  _fleet_save_state "$REPO_DIR" "base-test" "$wt_dir" "" "" "development"
+
+  run fleet status base-test
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Parent:    development"* ]]
+  [[ "$output" == *"commits ahead of development"* ]]
+}
+
+@test "fleet status --json includes base_branch" {
   create_test_worktree "json-status"
   local wt_dir
   wt_dir="$(_fleet_worktree_dir "$REPO_DIR" "json-status")"
-  _fleet_save_state "$REPO_DIR" "json-status" "$wt_dir" "workspace:5" "surface:5"
+  _fleet_save_state "$REPO_DIR" "json-status" "$wt_dir" "workspace:5" "surface:5" "main"
 
   run fleet status json-status --json
   [ "$status" -eq 0 ]
   [[ "$output" == *'"branch": "json-status"'* ]]
+  [[ "$output" == *'"base_branch": "main"'* ]]
   [[ "$output" == *'"workspace_id": "workspace:5"'* ]]
   [[ "$output" == *'"commits_ahead"'* ]]
 }

@@ -197,3 +197,19 @@ teardown() {
   run _fleet_read_state_field "$sf" "repo_root"
   [ "$output" = "$REPO_DIR" ]
 }
+
+@test "_fleet_save_state includes base_branch" {
+  _fleet_save_state "$REPO_DIR" "test-br" "/path/to/wt" "workspace:1" "surface:1" "development"
+  local sf
+  sf="$(_fleet_state_file "$REPO_DIR" "test-br")"
+  run _fleet_read_state_field "$sf" "base_branch"
+  [ "$output" = "development" ]
+}
+
+@test "_fleet_save_state base_branch defaults to empty" {
+  _fleet_save_state "$REPO_DIR" "test-br" "/path/to/wt" "workspace:1" "surface:1"
+  local sf
+  sf="$(_fleet_state_file "$REPO_DIR" "test-br")"
+  run _fleet_read_state_field "$sf" "base_branch"
+  [ "$output" = "" ]
+}

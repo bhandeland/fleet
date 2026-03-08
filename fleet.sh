@@ -309,7 +309,7 @@ _fleet_state_file() {
 }
 
 _fleet_save_state() {
-  local repo_root="$1" branch="$2" worktree_dir="$3" workspace_id="$4" main_surface="${5:-}"
+  local repo_root="$1" branch="$2" worktree_dir="$3" workspace_id="$4" main_surface="${5:-}" base_branch="${6:-}"
   local state_dir state_file
   state_dir="$(_fleet_state_dir "$repo_root")"
   state_file="$(_fleet_state_file "$repo_root" "$branch")"
@@ -320,7 +320,8 @@ _fleet_save_state() {
   "worktree_dir": "$worktree_dir",
   "workspace_id": "$workspace_id",
   "main_surface": "$main_surface",
-  "repo_root": "$repo_root"
+  "repo_root": "$repo_root",
+  "base_branch": "$base_branch"
 }
 EOF
 }
@@ -504,7 +505,7 @@ _fleet_new() {
         | head -1 | grep -oE 'surface:[0-9]+' || true)"
 
       # Save state
-      _fleet_save_state "$repo_root" "$branch" "$worktree_dir" "$workspace_id" "$main_surface"
+      _fleet_save_state "$repo_root" "$branch" "$worktree_dir" "$workspace_id" "$main_surface" "$default_branch"
     fi
 
     # Run setup hook (synchronously in subshell)
@@ -575,6 +576,9 @@ _fleet_new() {
         fi
       fi
     fi
+
+    # Save state (no workspace, but track base branch and repo root)
+    _fleet_save_state "$repo_root" "$branch" "$worktree_dir" "" "" "$default_branch"
 
     echo "Worktree ready: $worktree_dir"
     ( cd "$worktree_dir" && if [[ -n "$prompt" ]]; then claude "$prompt"; else claude; fi )
@@ -1700,11 +1704,12 @@ _fleet_status() {
   ws_id="$(_fleet_read_state_field "$state_file" "workspace_id")"
   worktree_dir="$(_fleet_read_state_field "$state_file" "worktree_dir")"
 
-  # Git info
-  local default_branch git_ahead git_status_short
-  default_branch="$(_fleet_default_branch "$repo_root")"
+  # Git info — use stored base_branch if available, fall back to current default
+  local base_branch git_ahead git_status_short
+  base_branch="$(_fleet_read_state_field "$state_file" "base_branch")"
+  [[ -z "$base_branch" ]] && base_branch="$(_fleet_default_branch "$repo_root")"
   if [[ -n "$worktree_dir" && -d "$worktree_dir" ]]; then
-    git_ahead="$(git -C "$worktree_dir" log --oneline "${default_branch}..${branch}" 2>/dev/null | wc -l | tr -d ' ')"
+    git_ahead="$(git -C "$worktree_dir" log --oneline "${base_branch}..${branch}" 2>/dev/null | wc -l | tr -d ' ')"
     git_status_short="$(git -C "$worktree_dir" status --short 2>/dev/null)"
   fi
 
@@ -1741,6 +1746,7 @@ _fleet_status() {
     cat <<EOF
 {
   "branch": "$branch",
+  "base_branch": "$base_branch",
   "workspace_id": "${ws_id:-}",
   "worktree_dir": "${worktree_dir:-}",
   "git": {
@@ -1754,6 +1760,7 @@ EOF
   fi
 
   echo "Branch:    $branch"
+  echo "Parent:    $base_branch"
   [[ -n "$ws_id" ]] && echo "Workspace: $ws_id"
   [[ -n "$worktree_dir" ]] && echo "Worktree:  $worktree_dir"
   echo ""
@@ -1764,7 +1771,7 @@ EOF
     echo ""
   fi
 
-  echo "Git: ${git_ahead:-0} commits ahead of ${default_branch}, $([ "$git_clean" == "true" ] && echo "clean working tree" || echo "dirty working tree")"
+  echo "Git: ${git_ahead:-0} commits ahead of ${base_branch}, $([ "$git_clean" == "true" ] && echo "clean working tree" || echo "dirty working tree")"
 
   if _fleet_has_cmux && [[ -n "$ws_id" ]]; then
     echo ""
@@ -1830,7 +1837,9 @@ _fleet_register() {
     fi
   fi
 
-  _fleet_save_state "$repo_root" "$branch" "$worktree_dir" "$workspace_id" "$main_surface"
+  local base_branch
+  base_branch="$(_fleet_default_branch "$repo_root")"
+  _fleet_save_state "$repo_root" "$branch" "$worktree_dir" "$workspace_id" "$main_surface" "$base_branch"
   echo "Registered worktree: $branch"
   echo "  Directory: $worktree_dir"
   if [[ -n "$workspace_id" ]]; then
