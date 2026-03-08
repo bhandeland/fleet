@@ -1488,7 +1488,9 @@ if [[ -n "$ZSH_VERSION" ]]; then
       esac
     fi
   }
-  compdef _fleet_zsh_complete fleet
+  if (( $+functions[compdef] )); then
+    compdef _fleet_zsh_complete fleet
+  fi
 
 elif [[ -n "$BASH_VERSION" ]]; then
   _fleet_bash_complete() {
