@@ -359,7 +359,8 @@ _fleet_new() {
       *)      branch_words+=("$1"); shift ;;
     esac
   done
-  local branch="${branch_words[*]// /-}"
+  local branch
+  branch="$(IFS=-; echo "${branch_words[*]}")"
 
   if [[ -z "$branch" ]]; then
     echo "Usage: fleet new <branch> [-p <prompt>] [--team]"
@@ -488,7 +489,8 @@ _fleet_new() {
       else
         echo "No .fleet/setup found — worktree will skip project-specific setup."
         printf "Run 'fleet init' to generate one? (y/N) "
-        read -r reply
+        local reply=""
+        read -r reply 2>/dev/null || true
         if [[ "$reply" =~ ^[Yy]$ ]]; then
           _fleet_init
           hook="$(_fleet_find_hook "$repo_root" "setup")"

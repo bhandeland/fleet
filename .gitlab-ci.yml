@@ -1,5 +1,14 @@
 stages:
+  - test
   - release
+
+test:
+  stage: test
+  image: bash:latest
+  before_script:
+    - apk add --no-cache git bats
+  script:
+    - bats test/
 
 release:
   stage: release
