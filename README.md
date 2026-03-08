@@ -1,5 +1,7 @@
 # fleet
 
+> **This repo is mirrored from [GitLab](https://gitlab.com/nighthawk-oss/fleet).** Issues, merge requests, and contributions should go there.
+
 Claude Worktree Manager with [cmux.dev](https://cmux.dev) integration.
 
 Manages git worktree lifecycles for parallel Claude Code sessions. Each agent gets its own worktree — no conflicts, one command each. When cmux.dev is available, each worktree gets its own workspace with sidebar status and notifications.
