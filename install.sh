@@ -18,6 +18,14 @@ curl -fsSL "$RELEASE_URL/VERSION" | tr -d '[:space:]' > "$FLEET_DIR/VERSION"
 # Clear stale update-check cache from any previous install
 rm -f "$FLEET_DIR/.latest_version" "$FLEET_DIR/.last_check"
 
+# Install Claude Code skills
+SKILLS_DIR="$HOME/.claude/skills"
+for skill in fleet dispatch fleet-cleanup; do
+  mkdir -p "$SKILLS_DIR/$skill"
+  curl -fsSL "$RELEASE_URL/.claude/skills/$skill/SKILL.md" -o "$SKILLS_DIR/$skill/SKILL.md"
+done
+echo "Installed Claude Code skills: /fleet, /dispatch, /fleet-cleanup"
+
 # Clean up old sourced install if present
 rm -f "$FLEET_DIR/fleet.sh"
 

@@ -39,6 +39,9 @@ fleet is a pure Bash shell tool that manages git worktree lifecycles for paralle
 - `~/.fleet/team.json` — global team role config (fallback)
 - `examples/setup-node` — example setup hook for Node.js projects
 - `examples/team.json` — example team role config
+- `.claude/skills/fleet/SKILL.md` — `/fleet` skill: status dashboard + actions
+- `.claude/skills/dispatch/SKILL.md` — `/dispatch` skill: parallel workstream orchestration
+- `.claude/skills/fleet-cleanup/SKILL.md` — `/fleet-cleanup` skill: prune merged/stale worktrees
 
 ## Shell conventions
 
