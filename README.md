@@ -76,10 +76,86 @@ fleet init
 
 This creates `.fleet/setup` — a bash script that symlinks secrets, installs deps, and runs codegen. Commit it to your repo.
 
+## Common workflows
+
+### Parallel feature development
+
+Spin up multiple features at once — each gets its own worktree and Claude session:
+
+```bash
+fleet new auth-feature -p "Add OAuth2 login with Google provider"
+fleet new fix-navbar -p "Fix responsive navbar overflow on mobile"
+fleet new api-refactor -p "Refactor REST endpoints to use versioned routes"
+```
+
+List what's running, then switch between them:
+
+```bash
+fleet ls
+fleet focus auth-feature
+```
+
+### Review and merge
+
+When a feature is ready, merge it back:
+
+```bash
+fleet merge auth-feature            # fast-forward/merge into main checkout
+fleet merge fix-navbar --squash     # squash all commits into one
+fleet rm auth-feature               # clean up worktree + branch
+```
+
+### Resume work
+
+Pick up where you left off — Claude resumes with `--continue`:
+
+```bash
+fleet start auth-feature
+fleet start auth-feature -p "Now add the logout endpoint"
+```
+
+### Full lifecycle
+
+```bash
+fleet new my-feature -p "Build the thing"   # create worktree, launch Claude
+fleet ls                                     # check progress
+fleet cd my-feature                          # jump into the worktree
+fleet merge my-feature                       # merge into main
+fleet rm my-feature                          # clean up
+```
+
+### Team mode
+
+Launch a full agent team — explorer, architect, and reviewer — in split panes:
+
+```bash
+fleet new big-refactor --team
+# or add agents to an existing workspace:
+fleet team big-refactor
+```
+
+### Setup hooks
+
+Generate a setup hook so new worktrees auto-configure themselves:
+
+```bash
+fleet init                    # Claude analyzes your repo and generates .fleet/setup
+git add .fleet/setup && git commit -m "add fleet setup hook"
+```
+
+After this, every `fleet new` will automatically symlink secrets, install deps, and run codegen.
+
 ## Layout modes
 
 ```bash
 fleet config set layout nested          # .worktrees/<branch> (default)
 fleet config set layout outer-nested    # ../<repo>.worktrees/<branch>
 fleet config set layout sibling         # ../<repo>-<branch>
+```
+
+## Running tests
+
+```bash
+brew install bats-core    # or: apk add bats
+bats test/
 ```
