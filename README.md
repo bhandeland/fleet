@@ -21,7 +21,9 @@ fleet new auth-feature -p "Add OAuth2 login"
 
 ![fleet new](assets/fleet-new.png)
 
-With cmux.dev, this opens a new workspace. Without it, it cd's into the worktree and launches Claude inline.
+Without cmux.dev, this cd's into the worktree and launches Claude inline. With cmux.dev, it opens a dedicated workspace with sidebar status:
+
+![fleet workspace](assets/fleet-workspace.png)
 
 ## Managing worktrees
 
@@ -55,6 +57,8 @@ With cmux.dev, `--team` spawns explorer, architect, and reviewer agents in split
 ```bash
 fleet new big-refactor --team
 ```
+
+![fleet team](assets/fleet-team.png)
 
 ## Setup hooks
 
