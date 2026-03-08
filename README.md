@@ -4,11 +4,32 @@ Claude Worktree Manager with [cmux.dev](https://cmux.dev) integration.
 
 Manages git worktree lifecycles for parallel Claude Code sessions. Each agent gets its own worktree — no conflicts, one command each. When cmux.dev is available, each worktree gets its own workspace with sidebar status and notifications.
 
+![fleet help](assets/fleet-help.png)
+
 ## Install
 
 ```bash
 curl -fsSL https://gitlab.com/nighthawk-oss/fleet/-/raw/main/install.sh | sh
 ```
+
+## Quick start
+
+```bash
+cd your-repo
+fleet new auth-feature -p "Add OAuth2 login"
+```
+
+![fleet new](assets/fleet-new.png)
+
+With cmux.dev, this opens a new workspace. Without it, it cd's into the worktree and launches Claude inline.
+
+## Managing worktrees
+
+List active worktrees and clean up when done:
+
+![fleet ls](assets/fleet-ls.png)
+
+![fleet rm](assets/fleet-rm.png)
 
 ## Commands
 
@@ -26,15 +47,6 @@ fleet team <branch>                        — Spawn agent team in split panes
 fleet status [branch]                      — Show sidebar state for a workspace
 fleet update / fleet version
 ```
-
-## Quick start
-
-```bash
-cd your-repo
-fleet new auth-feature -p "Implement OAuth2 login flow"
-```
-
-With cmux.dev, this opens a new workspace. Without it, it cd's into the worktree and launches Claude inline.
 
 ## Agent teams
 
