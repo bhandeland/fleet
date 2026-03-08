@@ -24,7 +24,7 @@ FLEET_VERSION="unknown"
 
 fleet() {
   local cmd="$1"
-  shift 2>/dev/null
+  shift &>/dev/null
 
   _fleet_check_update
 
@@ -93,12 +93,12 @@ _fleet_default_branch() {
     echo "$default"
     return
   fi
-  if git -C "$repo_root" show-ref --verify --quiet refs/heads/main 2>/dev/null; then
+  if git -C "$repo_root" show-ref --verify --quiet refs/heads/main &>/dev/null; then
     echo "main"
-  elif git -C "$repo_root" show-ref --verify --quiet refs/heads/master 2>/dev/null; then
+  elif git -C "$repo_root" show-ref --verify --quiet refs/heads/master &>/dev/null; then
     echo "master"
   else
-    git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null
+    git -C "$repo_root" rev-parse --abbrev-ref HEAD &>/dev/null
   fi
 }
 
@@ -224,8 +224,8 @@ _fleet_spinner_start() {
 _fleet_spinner_stop() {
   [[ -z "$_FLEET_SPINNER_PID" ]] && return
   [[ -n "$ZSH_VERSION" ]] && setopt localoptions nomonitor
-  kill "$_FLEET_SPINNER_PID" 2>/dev/null
-  wait "$_FLEET_SPINNER_PID" 2>/dev/null
+  kill "$_FLEET_SPINNER_PID" &>/dev/null
+  wait "$_FLEET_SPINNER_PID" &>/dev/null
   printf "\b \n"
   unset _FLEET_SPINNER_PID
 }
@@ -261,7 +261,7 @@ _fleet_check_update() {
     [[ -n "$v" ]] && printf '%s' "$v" > "$version_file"
     printf '%s' "$now" > "$check_file"
   } &>/dev/null &
-  disown 2>/dev/null
+  disown &>/dev/null
 }
 
 # ── State Management ────────────────────────────────────────────────
@@ -313,7 +313,7 @@ _fleet_rm_state() {
   local repo_root="$1" branch="$2"
   local state_file
   state_file="$(_fleet_state_file "$repo_root" "$branch")"
-  rm -f "$state_file" 2>/dev/null
+  rm -f "$state_file" &>/dev/null
 }
 
 # Update state file with team surface refs
@@ -377,7 +377,7 @@ _fleet_new() {
   default_branch="$(_fleet_default_branch "$repo_root")"
   if [[ -n "$default_branch" ]]; then
     echo "Pulling latest from $default_branch..."
-    git -C "$repo_root" pull --ff-only origin "$default_branch" 2>/dev/null || true
+    git -C "$repo_root" pull --ff-only origin "$default_branch" &>/dev/null || true
   fi
 
   local worktree_dir
@@ -392,7 +392,7 @@ _fleet_new() {
       local ws_id
       ws_id="$(_fleet_read_state_field "$state_file" "workspace_id")"
       if [[ -n "$ws_id" ]]; then
-        cmux select-workspace --workspace "$ws_id" 2>/dev/null
+        cmux select-workspace --workspace "$ws_id" &>/dev/null
         return 0
       fi
     fi
@@ -413,23 +413,21 @@ _fleet_new() {
   if _fleet_has_cmux; then
     # ── cmux.dev mode ──
     # Create workspace
-    local ws_output
-    ws_output="$(cmux new-workspace --command "cd $worktree_dir && exec \$SHELL" --json 2>/dev/null)"
-    local workspace_id
-    workspace_id="$(_fleet_extract_ref "$ws_output" "workspace")"
-    if [[ -z "$workspace_id" ]]; then
-      workspace_id="$(cmux current-workspace --json 2>/dev/null | grep -oE 'workspace:[0-9]+' | head -1)"
+    local ws_output workspace_id
+    ws_output="$(cmux new-workspace --command "cd $worktree_dir && exec \$SHELL" 2>/dev/null)"
+    # cmux new-workspace returns "OK <uuid>"
+    workspace_id="${ws_output#OK }"
+    if [[ -z "$workspace_id" || "$workspace_id" == "$ws_output" ]]; then
+      workspace_id="$(cmux current-workspace 2>/dev/null)"
     fi
 
     if [[ -n "$workspace_id" ]]; then
-      cmux rename-workspace --workspace "$workspace_id" "$branch" 2>/dev/null
-      cmux set-status task "$branch" --icon git-branch --workspace "$workspace_id" 2>/dev/null
-      cmux set-status status "setting up" --color "#ffcc00" --workspace "$workspace_id" 2>/dev/null
+      cmux rename-workspace --workspace "$workspace_id" "$branch" &>/dev/null
+      cmux set-status task "$branch" --icon git-branch --workspace "$workspace_id" &>/dev/null
+      cmux set-status status "setting up" --color "#ffcc00" --workspace "$workspace_id" &>/dev/null
 
       # Save state
-      local main_surface
-      main_surface="$(_fleet_extract_ref "$ws_output" "surface")"
-      _fleet_save_state "$repo_root" "$branch" "$worktree_dir" "$workspace_id" "$main_surface"
+      _fleet_save_state "$repo_root" "$branch" "$worktree_dir" "$workspace_id" ""
     fi
 
     # Run setup hook (synchronously in subshell)
@@ -449,8 +447,8 @@ _fleet_new() {
     fi
 
     if [[ -n "$workspace_id" ]]; then
-      cmux set-status status "ready" --color "#00cc66" --workspace "$workspace_id" 2>/dev/null
-      cmux notify --title "fleet" --body "$branch ready" --workspace "$workspace_id" 2>/dev/null
+      cmux set-status status "ready" --color "#00cc66" --workspace "$workspace_id" &>/dev/null
+      cmux notify --title "fleet" --body "$branch ready" --workspace "$workspace_id" &>/dev/null
 
       # Launch team if requested
       if [[ "$team" == true ]]; then
@@ -462,11 +460,11 @@ _fleet_new() {
       if [[ -n "$prompt" ]]; then
         claude_cmd="claude -p $(printf '%q' "$prompt")"
       fi
-      cmux send --workspace "$workspace_id" "$claude_cmd" 2>/dev/null
-      cmux send-key --workspace "$workspace_id" Enter 2>/dev/null
+      cmux send --workspace "$workspace_id" "$claude_cmd" &>/dev/null
+      cmux send-key --workspace "$workspace_id" Enter &>/dev/null
       sleep 1
-      cmux send --workspace "$workspace_id" "/rename $branch" 2>/dev/null
-      cmux send-key --workspace "$workspace_id" Enter 2>/dev/null
+      cmux send --workspace "$workspace_id" "/rename $branch" &>/dev/null
+      cmux send-key --workspace "$workspace_id" Enter &>/dev/null
     fi
 
     echo "Workspace ready: $branch"
@@ -489,7 +487,7 @@ _fleet_new() {
         echo "No .fleet/setup found — worktree will skip project-specific setup."
         printf "Run 'fleet init' to generate one? (y/N) "
         local reply=""
-        read -r reply 2>/dev/null || true
+        read -r reply &>/dev/null || true
         if [[ "$reply" =~ ^[Yy]$ ]]; then
           _fleet_init
           hook="$(_fleet_find_hook "$repo_root" "setup")"
@@ -548,13 +546,13 @@ _fleet_start() {
     local ws_id
     ws_id="$(_fleet_read_state_field "$state_file" "workspace_id")"
     if [[ -n "$ws_id" ]]; then
-      cmux select-workspace --workspace "$ws_id" 2>/dev/null
+      cmux select-workspace --workspace "$ws_id" &>/dev/null
       local claude_cmd="claude -c"
       if [[ -n "$prompt" ]]; then
         claude_cmd="claude -c -p $(printf '%q' "$prompt")"
       fi
-      cmux send --workspace "$ws_id" "$claude_cmd" 2>/dev/null
-      cmux send-key --workspace "$ws_id" Enter 2>/dev/null
+      cmux send --workspace "$ws_id" "$claude_cmd" &>/dev/null
+      cmux send-key --workspace "$ws_id" Enter &>/dev/null
       return 0
     fi
     # No state file — fall through to fallback
@@ -688,8 +686,8 @@ _fleet_merge() {
     return 1
   fi
 
-  if ! git -C "$worktree_dir" diff --quiet 2>/dev/null || \
-     ! git -C "$worktree_dir" diff --cached --quiet 2>/dev/null; then
+  if ! git -C "$worktree_dir" diff --quiet &>/dev/null || \
+     ! git -C "$worktree_dir" diff --cached --quiet &>/dev/null; then
     echo "Worktree has uncommitted changes: $worktree_dir"
     echo "Commit or stash them before merging."
     return 1
@@ -721,7 +719,7 @@ _fleet_merge() {
 
   # Notify via cmux.dev if available
   if _fleet_has_cmux; then
-    cmux notify --title "fleet" --body "Merged $branch into $target_branch" 2>/dev/null
+    cmux notify --title "fleet" --body "Merged $branch into $target_branch" &>/dev/null
   fi
 }
 
@@ -797,13 +795,13 @@ _fleet_rm() {
     local ws_id
     ws_id="$(_fleet_read_state_field "$state_file" "workspace_id")"
     if [[ -n "$ws_id" ]]; then
-      cmux close-workspace --workspace "$ws_id" 2>/dev/null
+      cmux close-workspace --workspace "$ws_id" &>/dev/null
     fi
     _fleet_rm_state "$repo_root" "$branch"
   fi
 
   if git -C "$repo_root" worktree remove "${remove_args[@]}"; then
-    git -C "$repo_root" branch -d "$branch" 2>/dev/null
+    git -C "$repo_root" branch -d "$branch" &>/dev/null
     echo "Removed worktree and branch: $branch"
     if [[ "$PWD" == "$worktree_dir"* ]]; then
       echo "Warning: your shell is still in the deleted worktree directory."
@@ -894,13 +892,13 @@ _fleet_rm_all() {
       local ws_id
       ws_id="$(_fleet_read_state_field "$state_file" "workspace_id")"
       if [[ -n "$ws_id" ]]; then
-        cmux close-workspace --workspace "$ws_id" 2>/dev/null
+        cmux close-workspace --workspace "$ws_id" &>/dev/null
       fi
       _fleet_rm_state "$repo_root" "${branches[$i]}"
     fi
 
-    if git -C "$repo_root" worktree remove --force "${dirs[$i]}" 2>/dev/null; then
-      git -C "$repo_root" branch -d "${branches[$i]}" 2>/dev/null
+    if git -C "$repo_root" worktree remove --force "${dirs[$i]}" &>/dev/null; then
+      git -C "$repo_root" branch -d "${branches[$i]}" &>/dev/null
       echo "  Removed: ${branches[$i]}"
     else
       echo "  Failed:  ${branches[$i]}"
@@ -936,7 +934,7 @@ _fleet_init() {
 
   # Add .worktrees/ to .gitignore if not already present
   local gitignore="$repo_root/.gitignore"
-  if ! grep -qxF '.worktrees/' "$gitignore" 2>/dev/null; then
+  if ! grep -qxF '.worktrees/' "$gitignore" &>/dev/null; then
     printf '\n# fleet worktrees\n.worktrees/\n' >> "$gitignore"
     echo "Added .worktrees/ to .gitignore"
   fi
@@ -996,10 +994,10 @@ PROMPT
   local claude_pid
   _fleet_spinner_start
   [[ -n "$ZSH_VERSION" ]] && setopt localoptions nomonitor
-  claude -p --system-prompt "$system_prompt" "$prompt" < /dev/null > "$tmpfile" 2>/dev/null &
+  claude -p --system-prompt "$system_prompt" "$prompt" < /dev/null > "$tmpfile" &>/dev/null &
   claude_pid=$!
 
-  trap 'kill $claude_pid 2>/dev/null; wait $claude_pid 2>/dev/null; _fleet_spinner_stop; rm -f "$tmpfile"; trap - INT; printf "\nAborted.\n"; return 130' INT
+  trap 'kill $claude_pid &>/dev/null; wait $claude_pid &>/dev/null; _fleet_spinner_stop; rm -f "$tmpfile"; trap - INT; printf "\nAborted.\n"; return 130' INT
 
   local raw_output
   if ! wait "$claude_pid"; then
@@ -1066,9 +1064,9 @@ PROMPT
         tmpfile="$(mktemp)"
         _fleet_spinner_start
         [[ -n "$ZSH_VERSION" ]] && setopt localoptions nomonitor
-        claude -p --system-prompt "$system_prompt" "$prompt" < /dev/null > "$tmpfile" 2>/dev/null &
+        claude -p --system-prompt "$system_prompt" "$prompt" < /dev/null > "$tmpfile" &>/dev/null &
         claude_pid=$!
-        trap 'kill $claude_pid 2>/dev/null; wait $claude_pid 2>/dev/null; _fleet_spinner_stop; rm -f "$tmpfile"; trap - INT; printf "\nAborted.\n"; return 130' INT
+        trap 'kill $claude_pid &>/dev/null; wait $claude_pid &>/dev/null; _fleet_spinner_stop; rm -f "$tmpfile"; trap - INT; printf "\nAborted.\n"; return 130' INT
         if ! wait "$claude_pid"; then
           _fleet_spinner_stop
           rm -f "$tmpfile"
@@ -1115,11 +1113,11 @@ _fleet_config() {
   if [[ -z "$1" ]]; then
     local layout source
     if [[ -n "$repo_root" && -f "$repo_root/.fleet/config.json" ]] \
-       && grep -q '"layout"' "$repo_root/.fleet/config.json" 2>/dev/null; then
+       && grep -q '"layout"' "$repo_root/.fleet/config.json" &>/dev/null; then
       layout="$(grep '"layout"' "$repo_root/.fleet/config.json" | sed 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
       source="$repo_root/.fleet/config.json"
     elif [[ -f "$HOME/.fleet/config.json" ]] \
-       && grep -q '"layout"' "$HOME/.fleet/config.json" 2>/dev/null; then
+       && grep -q '"layout"' "$HOME/.fleet/config.json" &>/dev/null; then
       layout="$(grep '"layout"' "$HOME/.fleet/config.json" | sed 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
       source="~/.fleet/config.json"
     else
@@ -1187,7 +1185,7 @@ _fleet_config() {
     fi
   fi
 
-  if [[ -f "$config_file" ]] && grep -q '"layout"' "$config_file" 2>/dev/null; then
+  if [[ -f "$config_file" ]] && grep -q '"layout"' "$config_file" &>/dev/null; then
     local tmp
     tmp="$(mktemp)"
     sed 's/"layout"[[:space:]]*:[[:space:]]*"[^"]*"/"layout": "'"$preset"'"/' "$config_file" > "$tmp" && mv "$tmp" "$config_file"
@@ -1233,7 +1231,7 @@ _fleet_focus() {
     return 1
   fi
 
-  cmux select-workspace --workspace "$ws_id" 2>/dev/null
+  cmux select-workspace --workspace "$ws_id" &>/dev/null
 }
 
 _fleet_team() {
@@ -1277,36 +1275,36 @@ _fleet_team() {
 
   # Create right split for explorer
   local split_output explorer_surface
-  split_output="$(cmux new-split right --workspace "$ws_id" --json 2>/dev/null)"
+  split_output="$(cmux new-split right --workspace "$ws_id" 2>/dev/null)"
   explorer_surface="$(_fleet_extract_ref "$split_output" "surface")"
   if [[ -n "$explorer_surface" ]]; then
-    cmux rename-tab --surface "$explorer_surface" --workspace "$ws_id" "explorer" 2>/dev/null
-    cmux send --surface "$explorer_surface" --workspace "$ws_id" "cd $worktree_dir && claude --agent code-explorer" 2>/dev/null
-    cmux send-key --surface "$explorer_surface" --workspace "$ws_id" Enter 2>/dev/null
+    cmux rename-tab --surface "$explorer_surface" --workspace "$ws_id" "explorer" &>/dev/null
+    cmux send --surface "$explorer_surface" --workspace "$ws_id" "cd $worktree_dir && claude --agent code-explorer" &>/dev/null
+    cmux send-key --surface "$explorer_surface" --workspace "$ws_id" Enter &>/dev/null
   fi
 
   # Create down split from right pane for architect
   local architect_surface
-  split_output="$(cmux new-split down --surface "$explorer_surface" --workspace "$ws_id" --json 2>/dev/null)"
+  split_output="$(cmux new-split down --surface "$explorer_surface" --workspace "$ws_id" 2>/dev/null)"
   architect_surface="$(_fleet_extract_ref "$split_output" "surface")"
   if [[ -n "$architect_surface" ]]; then
-    cmux rename-tab --surface "$architect_surface" --workspace "$ws_id" "architect" 2>/dev/null
-    cmux send --surface "$architect_surface" --workspace "$ws_id" "cd $worktree_dir && claude --agent code-architect" 2>/dev/null
-    cmux send-key --surface "$architect_surface" --workspace "$ws_id" Enter 2>/dev/null
+    cmux rename-tab --surface "$architect_surface" --workspace "$ws_id" "architect" &>/dev/null
+    cmux send --surface "$architect_surface" --workspace "$ws_id" "cd $worktree_dir && claude --agent code-architect" &>/dev/null
+    cmux send-key --surface "$architect_surface" --workspace "$ws_id" Enter &>/dev/null
   fi
 
   # Create down split from architect pane for reviewer
   local reviewer_surface
-  split_output="$(cmux new-split down --surface "$architect_surface" --workspace "$ws_id" --json 2>/dev/null)"
+  split_output="$(cmux new-split down --surface "$architect_surface" --workspace "$ws_id" 2>/dev/null)"
   reviewer_surface="$(_fleet_extract_ref "$split_output" "surface")"
   if [[ -n "$reviewer_surface" ]]; then
-    cmux rename-tab --surface "$reviewer_surface" --workspace "$ws_id" "reviewer" 2>/dev/null
-    cmux send --surface "$reviewer_surface" --workspace "$ws_id" "cd $worktree_dir && claude --agent code-reviewer" 2>/dev/null
-    cmux send-key --surface "$reviewer_surface" --workspace "$ws_id" Enter 2>/dev/null
+    cmux rename-tab --surface "$reviewer_surface" --workspace "$ws_id" "reviewer" &>/dev/null
+    cmux send --surface "$reviewer_surface" --workspace "$ws_id" "cd $worktree_dir && claude --agent code-reviewer" &>/dev/null
+    cmux send-key --surface "$reviewer_surface" --workspace "$ws_id" Enter &>/dev/null
   fi
 
   # Update sidebar status
-  cmux set-status agents "explorer, architect, reviewer" --workspace "$ws_id" 2>/dev/null
+  cmux set-status agents "explorer, architect, reviewer" --workspace "$ws_id" &>/dev/null
 
   # Save surface refs to state
   _fleet_save_team_surfaces "$state_file" "$explorer_surface" "$architect_surface" "$reviewer_surface"
@@ -1354,7 +1352,7 @@ _fleet_status() {
   echo "Branch:    $branch"
   echo "Workspace: $ws_id"
   echo ""
-  cmux sidebar-state --workspace "$ws_id" 2>/dev/null
+  cmux sidebar-state --workspace "$ws_id" &>/dev/null
 }
 
 _fleet_update() {
