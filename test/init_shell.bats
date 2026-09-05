@@ -41,3 +41,15 @@ teardown() {
   run bash -c "$init_output"
   [ "$status" -eq 0 ]
 }
+
+@test "fleet init-shell output stays valid bash when an update is available" {
+  # The whole point of init-shell's stdout is that it gets eval'd by the
+  # user's rc file. Anything else printed there is executed as shell code,
+  # so the update notice must never land on it.
+  printf '99.99.99' > "$HOME/.fleet/.latest_version"
+  local init_output
+  init_output="$(fleet init-shell 2>/dev/null)"
+  [[ "$init_output" != *"update available"* ]]
+  run bash -c "$init_output"
+  [ "$status" -eq 0 ]
+}

@@ -260,8 +260,13 @@ _fleet_check_update() {
     local latest
     latest="$(<"$version_file")"
     if [[ -n "$latest" && "$latest" != "$FLEET_VERSION" ]]; then
+      # stderr, not stdout. The dispatcher runs this before every subcommand,
+      # and two of them have stdout that is consumed rather than read: the
+      # shell rc file evals `fleet init-shell`, and the wrapper cd's to
+      # whatever `fleet cd` prints. A notice on stdout is executed as shell
+      # code in the first case and treated as a directory in the second.
       printf 'fleet: update available (%s → %s). Run "fleet update" to upgrade.\n' \
-        "$FLEET_VERSION" "$latest"
+        "$FLEET_VERSION" "$latest" >&2
     fi
   fi
 

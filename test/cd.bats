@@ -45,3 +45,14 @@ teardown() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"Not in a git repo"* ]]
 }
+
+@test "fleet cd prints only the path when an update is available" {
+  # The init-shell wrapper does `dir="$(command fleet cd ...)" && cd "$dir"`,
+  # so anything else on stdout is what the user's shell tries to cd into.
+  printf '99.99.99' > "$HOME/.fleet/.latest_version"
+  create_test_worktree "cd-target"
+  local dir
+  dir="$(fleet cd cd-target 2>/dev/null)"
+  [[ "$dir" != *"update available"* ]]
+  [ -d "$dir" ]
+}

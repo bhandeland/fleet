@@ -39,3 +39,13 @@ teardown() {
   run _fleet_check_update
   [ "$output" = "" ]
 }
+
+@test "_fleet_check_update prints the notice to stderr, not stdout" {
+  printf '99.99.99' > "$HOME/.fleet/.latest_version"
+  local on_stdout
+  on_stdout="$(_fleet_check_update 2>/dev/null)"
+  [ -z "$on_stdout" ]
+  local on_stderr
+  on_stderr="$(_fleet_check_update 2>&1 >/dev/null)"
+  [[ "$on_stderr" == *"update available"* ]]
+}
